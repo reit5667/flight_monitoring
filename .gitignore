@@ -12,11 +12,26 @@ build/
 .venv/
 venv/
 
-# Playwright
+# Playwright (browsers cache, может весить несколько GB)
 .playwright/
+ms-playwright/
 
-# Raw storage (large data files, not tracked in git)
+# Raw storage (большие JSON файлы, не нужны в git)
 raw_storage/
+
+# Docker (postgres data volume, если смонтирован локально)
+postgres_data/
+
+# Prefect (локальный state и конфигурация)
+.prefect/
+
+# Logs (файлы логов от pipeline)
+*.log
+logs/
+
+# Type checking
+.mypy_cache/
+.ruff_cache/
 
 # IDE
 .idea/
