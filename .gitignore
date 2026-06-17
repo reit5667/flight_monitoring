@@ -1,6 +1,12 @@
 # Secrets
 .env
 
+# Project context files (for Claude Code agents, not for the repo)
+PROJECT_STATUS.md
+tasks.json
+PRD_flight_price_final.md
+CLAUDE.md
+
 # Python
 __pycache__/
 *.pyc

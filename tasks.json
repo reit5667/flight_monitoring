@@ -59,8 +59,10 @@
         "Шаг 4: Выполни docker compose exec postgres psql -U $POSTGRES_USER -c '\\l' — должна открыться psql без ошибок",
         "Шаг 5: Выполни docker compose down && docker compose up -d postgres — данные должны сохраниться"
       ],
-      "dependencies": ["TASK-001"],
-      "status": "pending"
+      "dependencies": [
+        "TASK-001"
+      ],
+      "status": "done"
     },
     {
       "id": "TASK-003",
@@ -80,8 +82,10 @@
         "Шаг 3: Выполни \\d routes — проверь все колонки и типы",
         "Шаг 4: Повторно применить миграцию — не должно быть ошибок (идемпотентность)"
       ],
-      "dependencies": ["TASK-002"],
-      "status": "pending"
+      "dependencies": [
+        "TASK-002"
+      ],
+      "status": "done"
     },
     {
       "id": "TASK-004",
@@ -102,8 +106,10 @@
         "Шаг 3: Проверь \\d flights_history — поля valid_from, valid_to, is_current существуют",
         "Шаг 4: Проверь constraint на cdc_events.event_type: INSERT INTO cdc_events (event_type, ...) VALUES ('INVALID', ...) — должна быть ошибка"
       ],
-      "dependencies": ["TASK-003"],
-      "status": "pending"
+      "dependencies": [
+        "TASK-003"
+      ],
+      "status": "done"
     },
     {
       "id": "TASK-005",
@@ -123,8 +129,10 @@
         "Шаг 3: SELECT * FROM source_route_mappings — минимум 9 записей (3 маршрута × 3 источника)",
         "Шаг 4: Повторно применить seed — количество записей не изменилось"
       ],
-      "dependencies": ["TASK-003"],
-      "status": "pending"
+      "dependencies": [
+        "TASK-003"
+      ],
+      "status": "done"
     },
     {
       "id": "TASK-006",
@@ -143,7 +151,9 @@
         "Шаг 3: prefect worker ls — worker должен быть online",
         "Шаг 4: docker compose logs prefect-worker — нет критических ошибок"
       ],
-      "dependencies": ["TASK-002"],
+      "dependencies": [
+        "TASK-002"
+      ],
       "status": "pending"
     },
     {
@@ -164,7 +174,9 @@
         "Шаг 3: Открыть http://localhost:9090 — Prometheus UI загружается",
         "Шаг 4: docker compose down && docker compose up -d grafana — дашборды не потерялись"
       ],
-      "dependencies": ["TASK-002"],
+      "dependencies": [
+        "TASK-002"
+      ],
       "status": "pending"
     },
     {
@@ -185,8 +197,10 @@
         "Шаг 3: Попробовать создать Flight с origin='hanoi' — должна быть ValidationError (не IATA формат)",
         "Шаг 4: python -m pytest tests/test_models.py — все тесты проходят"
       ],
-      "dependencies": ["TASK-001"],
-      "status": "pending"
+      "dependencies": [
+        "TASK-001"
+      ],
+      "status": "done"
     },
     {
       "id": "TASK-009",
@@ -204,8 +218,10 @@
         "Шаг 2: Создать CdcEvent с event_type='INVALID' — ValidationError",
         "Шаг 3: python -m pytest tests/test_models.py — все тесты проходят"
       ],
-      "dependencies": ["TASK-001"],
-      "status": "pending"
+      "dependencies": [
+        "TASK-001"
+      ],
+      "status": "done"
     },
     {
       "id": "TASK-010",
@@ -223,8 +239,10 @@
         "Шаг 2: Попробовать инстанцировать BaseConnector напрямую — TypeError (абстрактный класс)",
         "Шаг 3: Создать тестовый DummyConnector(BaseConnector) без реализации fetch — TypeError при инстанцировании"
       ],
-      "dependencies": ["TASK-008"],
-      "status": "pending"
+      "dependencies": [
+        "TASK-008"
+      ],
+      "status": "done"
     },
     {
       "id": "TASK-011",
@@ -244,7 +262,10 @@
         "Шаг 3: Вызвать load_raw(snapshot_id) — возвращает тот же dict",
         "Шаг 4: Вызвать save_raw дважды — два разных файла (уникальный timestamp в имени)"
       ],
-      "dependencies": ["TASK-004", "TASK-009"],
+      "dependencies": [
+        "TASK-004",
+        "TASK-009"
+      ],
       "status": "pending"
     },
     {
@@ -266,7 +287,10 @@
         "Шаг 3: Сохранить raw JSON в файл и убедиться что он читаем",
         "Шаг 4: Симулировать недоступность сети — коннектор должен вернуть None без исключения"
       ],
-      "dependencies": ["TASK-010", "TASK-005"],
+      "dependencies": [
+        "TASK-010",
+        "TASK-005"
+      ],
       "status": "pending"
     },
     {
@@ -287,7 +311,10 @@
         "Шаг 3: Проверить первый Flight: все поля заполнены, price > 0, departure_time > now",
         "Шаг 4: python -m pytest tests/test_parsers.py::test_aviasales — проходит"
       ],
-      "dependencies": ["TASK-008", "TASK-012"],
+      "dependencies": [
+        "TASK-008",
+        "TASK-012"
+      ],
       "status": "pending"
     },
     {
@@ -307,7 +334,10 @@
         "Шаг 3: parse_trip(raw, route_id=2) возвращает список Flight с заполненными полями",
         "Шаг 4: python -m pytest tests/test_parsers.py::test_trip — проходит"
       ],
-      "dependencies": ["TASK-010", "TASK-005"],
+      "dependencies": [
+        "TASK-010",
+        "TASK-005"
+      ],
       "status": "pending"
     },
     {
@@ -327,7 +357,10 @@
         "Шаг 3: parse_agoda(raw, route_id=3) возвращает список Flight",
         "Шаг 4: python -m pytest tests/test_parsers.py::test_agoda — проходит"
       ],
-      "dependencies": ["TASK-010", "TASK-005"],
+      "dependencies": [
+        "TASK-010",
+        "TASK-005"
+      ],
       "status": "pending"
     },
     {
@@ -351,7 +384,12 @@
         "Шаг 4: SELECT * FROM raw_snapshots — 3 новые записи (по одной на источник)",
         "Шаг 5: Отключить один маппинг (enabled=false), повторить — в результате только 2 источника"
       ],
-      "dependencies": ["TASK-011", "TASK-013", "TASK-014", "TASK-015"],
+      "dependencies": [
+        "TASK-011",
+        "TASK-013",
+        "TASK-014",
+        "TASK-015"
+      ],
       "status": "pending"
     },
     {
@@ -375,7 +413,9 @@
         "Шаг 4: UPDATE.changed_fields содержит изменённые поля",
         "Шаг 5: python -m pytest tests/test_cdc.py — все тесты проходят"
       ],
-      "dependencies": ["TASK-009"],
+      "dependencies": [
+        "TASK-009"
+      ],
       "status": "pending"
     },
     {
@@ -398,7 +438,10 @@
         "Шаг 4: Применить пакет из 10 событий — все применены в одной транзакции",
         "Шаг 5: Симулировать ошибку в середине пакета — все изменения откатились (rollback)"
       ],
-      "dependencies": ["TASK-004", "TASK-017"],
+      "dependencies": [
+        "TASK-004",
+        "TASK-017"
+      ],
       "status": "pending"
     },
     {
@@ -419,7 +462,10 @@
         "Шаг 3: DELETE → 2 записи, обе is_current=false",
         "Шаг 4: SELECT * FROM flights_history WHERE is_current=true — совпадает с flights_current"
       ],
-      "dependencies": ["TASK-004", "TASK-017"],
+      "dependencies": [
+        "TASK-004",
+        "TASK-017"
+      ],
       "status": "pending"
     },
     {
@@ -440,7 +486,10 @@
         "Шаг 3: Проверить JSONB поле: SELECT changed_fields FROM cdc_events LIMIT 1 — читаемый JSON",
         "Шаг 4: Передать пустой список — никаких ошибок, 0 вставок"
       ],
-      "dependencies": ["TASK-004", "TASK-017"],
+      "dependencies": [
+        "TASK-004",
+        "TASK-017"
+      ],
       "status": "pending"
     },
     {
@@ -462,7 +511,12 @@
         "Шаг 4: Проверить flights_history — история корректна",
         "Шаг 5: PipelineResult.errors пустой"
       ],
-      "dependencies": ["TASK-016", "TASK-018", "TASK-019", "TASK-020"],
+      "dependencies": [
+        "TASK-016",
+        "TASK-018",
+        "TASK-019",
+        "TASK-020"
+      ],
       "status": "pending"
     },
     {
@@ -485,7 +539,10 @@
         "Шаг 4: В логах Prefect виден запуск для каждого маршрута",
         "Шаг 5: После завершения — в cdc_events и flights_current есть свежие данные"
       ],
-      "dependencies": ["TASK-006", "TASK-021"],
+      "dependencies": [
+        "TASK-006",
+        "TASK-021"
+      ],
       "status": "pending"
     },
     {
@@ -506,7 +563,9 @@
         "Шаг 3: Передать невалидный токен — функция вернула False, не упала",
         "Шаг 4: Передать пустую строку — функция вернула False"
       ],
-      "dependencies": ["TASK-001"],
+      "dependencies": [
+        "TASK-001"
+      ],
       "status": "pending"
     },
     {
@@ -529,7 +588,10 @@
         "Шаг 4: Создать UPDATE без существенных изменений — вернул None",
         "Шаг 5: python -m pytest tests/test_notifications.py — все тесты проходят"
       ],
-      "dependencies": ["TASK-009", "TASK-023"],
+      "dependencies": [
+        "TASK-009",
+        "TASK-023"
+      ],
       "status": "pending"
     },
     {
@@ -550,7 +612,9 @@
         "Шаг 3: Вызов через DEDUP_WINDOW_HOURS — снова True",
         "Шаг 4: Разные rule_type для одного рейса — оба отправляются"
       ],
-      "dependencies": ["TASK-024"],
+      "dependencies": [
+        "TASK-024"
+      ],
       "status": "pending"
     },
     {
@@ -571,7 +635,10 @@
         "Шаг 4: Нажать 'Test' — 'Data source is working'",
         "Шаг 5: Выполнить тестовый SQL: SELECT COUNT(*) FROM routes — результат отображается"
       ],
-      "dependencies": ["TASK-007", "TASK-004"],
+      "dependencies": [
+        "TASK-007",
+        "TASK-004"
+      ],
       "status": "pending"
     },
     {
@@ -593,7 +660,9 @@
         "Шаг 3: Выбрать маршрут в dropdown — графики обновились",
         "Шаг 4: Если данных нет — панели показывают 'No data' без ошибок"
       ],
-      "dependencies": ["TASK-026"],
+      "dependencies": [
+        "TASK-026"
+      ],
       "status": "pending"
     },
     {
@@ -613,7 +682,9 @@
         "Шаг 2: После запуска pipeline — панели показывают актуальные данные",
         "Шаг 3: Bar chart CDC событий корректно разделяет INSERT/UPDATE/DELETE"
       ],
-      "dependencies": ["TASK-026"],
+      "dependencies": [
+        "TASK-026"
+      ],
       "status": "pending"
     },
     {
@@ -633,7 +704,9 @@
         "Шаг 3: Открыть Prometheus UI → Graph — ввести connector_requests_total, данные видны",
         "Шаг 4: Запустить pipeline ещё раз — counter увеличился"
       ],
-      "dependencies": ["TASK-022"],
+      "dependencies": [
+        "TASK-022"
+      ],
       "status": "pending"
     }
   ]

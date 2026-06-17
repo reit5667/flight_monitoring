@@ -14,7 +14,7 @@
 
 **Активная задача:** нет
 
-**Следующая задача:** TASK-002 — Docker Compose: PostgreSQL
+**Следующая задача:** TASK-011 (проверить зависимости)
 
 **Блокеры:** нет
 
@@ -36,11 +36,11 @@
 
 | Приоритет | Всего | Done |
 |---|---|---|
-| critical | 14 | 1 |
-| high | 10 | 0 |
+| critical | 14 | 7 |
+| high | 10 | 1 |
 | medium | 4 | 0 |
 | low | 1 | 0 |
-| **Итого** | **29** | **1** |
+| **Итого** | **29** | **8** |
 
 ---
 
@@ -52,6 +52,13 @@
 |---|---|---|
 | 2026-06-17 | — | PRD и tasks.json созданы, проект инициализирован |
 | 2026-06-17 | TASK-001 | Структура директорий, pyproject.toml, .env.example, .gitignore созданы; pip install -e . успешен |
+| 2026-06-17 | TASK-002 | docker-compose.yml создан; postgres:16 поднят healthy, psql соединение проверено, persistence после down/up подтверждена |
+| 2026-06-17 | TASK-003 | migrations/001_routes.sql создан; таблицы routes и source_route_mappings применены, идемпотентность проверена |
+| 2026-06-18 | TASK-004 | migrations/002_warehouse.sql создан; 4 таблицы применены, CHECK constraint на event_type проверен |
+| 2026-06-18 | TASK-005 | migrations/003_seed_routes.sql создан; 3 маршрута + 9 маппингов, идемпотентность через WHERE NOT EXISTS проверена |
+| 2026-06-18 | TASK-008 | models/flight.py + models/route.py созданы; 11/11 тестов passed; venv настроен |
+| 2026-06-18 | TASK-009 | models/cdc.py + models/storage.py созданы; 19/19 тестов passed |
+| 2026-06-18 | TASK-010 | connectors/base.py создан (Template Method, async); 23/23 тестов passed |
 
 ---
 
