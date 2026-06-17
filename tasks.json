@@ -1,0 +1,640 @@
+{
+  "agent_instructions": {
+    "before_start": [
+      "Прочитай этот файл полностью и PRD_flight_price_final.md",
+      "Выполни git log --oneline -20 для понимания текущего состояния",
+      "Выбери ОДНУ задачу со статусом pending и наивысшим приоритетом (critical > high > medium > low)",
+      "Проверь, что все dependencies этой задачи имеют статус done",
+      "Обнови PROJECT_STATUS.md — укажи задачу, которую берёшь в работу"
+    ],
+    "during_work": [
+      "Работай только над выбранной задачей",
+      "Делай коммиты после каждого логического изменения",
+      "Не трогай код, не связанный с текущей задачей",
+      "Если встречаешь блокер — зафиксируй его в PROJECT_STATUS.md и останови работу"
+    ],
+    "before_finish": [
+      "Выполни ВСЕ test_steps из задачи",
+      "Меняй status на done ТОЛЬКО после успешного прохождения всех тестов",
+      "Обнови PROJECT_STATUS.md — добавь summary выполненной задачи",
+      "ЗАПРЕЩЕНО удалять или редактировать задачи — только менять status"
+    ]
+  },
+  "tasks": [
+    {
+      "id": "TASK-001",
+      "category": "infrastructure",
+      "priority": "critical",
+      "description": "Инициализация структуры проекта: директории, pyproject.toml, .env.example, .gitignore, README.md",
+      "acceptance_criteria": [
+        "Создана структура директорий согласно PRD: connectors/, planner/, parser/, models/, cdc/, warehouse/, storage/, scheduler/, notifications/, dashboard/, migrations/, tests/, docs/",
+        "pyproject.toml содержит все зависимости из стека: playwright, httpx, orjson, pydantic, prefect, psycopg2, prometheus-client, python-telegram-bot",
+        ".env.example содержит все необходимые переменные: POSTGRES_*, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID",
+        ".gitignore включает .env, __pycache__, *.pyc, .playwright, raw_storage/"
+      ],
+      "test_steps": [
+        "Шаг 1: Выполни ls -la в корне проекта — все директории должны существовать",
+        "Шаг 2: Выполни python -m py_compile pyproject.toml или проверь синтаксис через pip install -e .",
+        "Шаг 3: Убедись, что .env не существует (только .env.example)"
+      ],
+      "dependencies": [],
+      "status": "done"
+    },
+    {
+      "id": "TASK-002",
+      "category": "infrastructure",
+      "priority": "critical",
+      "description": "Docker Compose: PostgreSQL сервис с persistent volume и healthcheck",
+      "acceptance_criteria": [
+        "docker-compose.yml содержит сервис postgres с образом postgres:16",
+        "Volume для данных persistent (данные не теряются при перезапуске)",
+        "Healthcheck настроен (pg_isready)",
+        "Переменные окружения берутся из .env файла",
+        "Порт 5432 проброшен на хост для локальной разработки"
+      ],
+      "test_steps": [
+        "Шаг 1: Скопируй .env.example в .env, заполни POSTGRES_* переменные",
+        "Шаг 2: Выполни docker compose up -d postgres",
+        "Шаг 3: Выполни docker compose ps — postgres должен быть в статусе healthy",
+        "Шаг 4: Выполни docker compose exec postgres psql -U $POSTGRES_USER -c '\\l' — должна открыться psql без ошибок",
+        "Шаг 5: Выполни docker compose down && docker compose up -d postgres — данные должны сохраниться"
+      ],
+      "dependencies": ["TASK-001"],
+      "status": "pending"
+    },
+    {
+      "id": "TASK-003",
+      "category": "infrastructure",
+      "priority": "critical",
+      "description": "SQL миграции: таблицы routes и source_route_mappings",
+      "acceptance_criteria": [
+        "Файл migrations/001_routes.sql создан",
+        "Таблица routes содержит все поля из PRD: route_id, origin, destination, date_from, date_to, max_price, currency, priority, search_interval, enabled, notes",
+        "Таблица source_route_mappings содержит: id, route_id (FK), source, source_origin, source_destination, enabled",
+        "Есть скрипт или Makefile-команда для применения миграций",
+        "Миграция идемпотентна (CREATE TABLE IF NOT EXISTS)"
+      ],
+      "test_steps": [
+        "Шаг 1: Применить миграцию: docker compose exec postgres psql -U $USER -d $DB -f /migrations/001_routes.sql",
+        "Шаг 2: Выполни \\dt в psql — таблицы routes и source_route_mappings должны присутствовать",
+        "Шаг 3: Выполни \\d routes — проверь все колонки и типы",
+        "Шаг 4: Повторно применить миграцию — не должно быть ошибок (идемпотентность)"
+      ],
+      "dependencies": ["TASK-002"],
+      "status": "pending"
+    },
+    {
+      "id": "TASK-004",
+      "category": "infrastructure",
+      "priority": "critical",
+      "description": "SQL миграции: таблицы warehouse (flights_current, flights_history, cdc_events, raw_snapshots)",
+      "acceptance_criteria": [
+        "Файл migrations/002_warehouse.sql создан",
+        "flights_current: уникальный ключ по (provider, flight_number, departure_time, route_id)",
+        "flights_history: поля valid_from, valid_to, is_current для SCD Type 2",
+        "cdc_events: event_type CHECK ('INSERT','UPDATE','DELETE'), changed_fields JSONB",
+        "raw_snapshots: путь к файлу, источник, маршрут, время, количество записей",
+        "Все FK с ON DELETE CASCADE или RESTRICT где уместно"
+      ],
+      "test_steps": [
+        "Шаг 1: Применить миграцию 002_warehouse.sql",
+        "Шаг 2: Выполни \\dt — все 4 таблицы присутствуют",
+        "Шаг 3: Проверь \\d flights_history — поля valid_from, valid_to, is_current существуют",
+        "Шаг 4: Проверь constraint на cdc_events.event_type: INSERT INTO cdc_events (event_type, ...) VALUES ('INVALID', ...) — должна быть ошибка"
+      ],
+      "dependencies": ["TASK-003"],
+      "status": "pending"
+    },
+    {
+      "id": "TASK-005",
+      "category": "infrastructure",
+      "priority": "high",
+      "description": "Seed MVP маршрутов и source_route_mappings в БД",
+      "acceptance_criteria": [
+        "Файл migrations/003_seed_routes.sql создан",
+        "Содержит INSERT для минимум 3 маршрутов из PRD (HAN→KUL, KUL→CMB, CMB→MOW)",
+        "Для каждого маршрута есть записи в source_route_mappings для aviasales, trip, agoda",
+        "Seed идемпотентен (INSERT ... ON CONFLICT DO NOTHING)",
+        "Маршруты имеют заполненные date_from, date_to, priority, search_interval"
+      ],
+      "test_steps": [
+        "Шаг 1: Применить 003_seed_routes.sql",
+        "Шаг 2: SELECT * FROM routes — минимум 3 записи",
+        "Шаг 3: SELECT * FROM source_route_mappings — минимум 9 записей (3 маршрута × 3 источника)",
+        "Шаг 4: Повторно применить seed — количество записей не изменилось"
+      ],
+      "dependencies": ["TASK-003"],
+      "status": "pending"
+    },
+    {
+      "id": "TASK-006",
+      "category": "infrastructure",
+      "priority": "high",
+      "description": "Docker Compose: добавить сервис Prefect (server + worker)",
+      "acceptance_criteria": [
+        "docker-compose.yml содержит сервисы prefect-server и prefect-worker",
+        "Prefect UI доступен на localhost:4200",
+        "Worker подключён к серверу и готов принимать задачи",
+        "Prefect сервисы зависят от postgres (depends_on с condition: service_healthy)"
+      ],
+      "test_steps": [
+        "Шаг 1: docker compose up -d prefect-server prefect-worker",
+        "Шаг 2: Открыть http://localhost:4200 — Prefect UI должен загрузиться",
+        "Шаг 3: prefect worker ls — worker должен быть online",
+        "Шаг 4: docker compose logs prefect-worker — нет критических ошибок"
+      ],
+      "dependencies": ["TASK-002"],
+      "status": "pending"
+    },
+    {
+      "id": "TASK-007",
+      "category": "infrastructure",
+      "priority": "medium",
+      "description": "Docker Compose: добавить Grafana и Prometheus",
+      "acceptance_criteria": [
+        "docker-compose.yml содержит сервисы grafana и prometheus",
+        "Grafana доступна на localhost:3000",
+        "Prometheus доступен на localhost:9090",
+        "Grafana имеет persistent volume для дашбордов",
+        "Базовая конфигурация prometheus.yml создана"
+      ],
+      "test_steps": [
+        "Шаг 1: docker compose up -d grafana prometheus",
+        "Шаг 2: Открыть http://localhost:3000 — Grafana UI загружается (admin/admin по умолчанию)",
+        "Шаг 3: Открыть http://localhost:9090 — Prometheus UI загружается",
+        "Шаг 4: docker compose down && docker compose up -d grafana — дашборды не потерялись"
+      ],
+      "dependencies": ["TASK-002"],
+      "status": "pending"
+    },
+    {
+      "id": "TASK-008",
+      "category": "functional",
+      "priority": "critical",
+      "description": "Pydantic модели: Flight, Route, SourceMapping",
+      "acceptance_criteria": [
+        "models/flight.py: класс Flight со всеми полями из PRD (provider, airline, flight_number, origin, destination, departure_time, arrival_time, duration, stops, price, currency, scraped_at, route_id)",
+        "models/route.py: классы Route и SourceMapping соответствуют схеме БД",
+        "Поля price типа Decimal, datetime — timezone-aware",
+        "Валидация: origin/destination — 3 символа uppercase (IATA), price > 0",
+        "Все модели имеют model_config с from_attributes=True для ORM-совместимости"
+      ],
+      "test_steps": [
+        "Шаг 1: python -c 'from models.flight import Flight; f = Flight(...); print(f)' — создание объекта без ошибок",
+        "Шаг 2: Попробовать создать Flight с price=-10 — должна быть ValidationError",
+        "Шаг 3: Попробовать создать Flight с origin='hanoi' — должна быть ValidationError (не IATA формат)",
+        "Шаг 4: python -m pytest tests/test_models.py — все тесты проходят"
+      ],
+      "dependencies": ["TASK-001"],
+      "status": "pending"
+    },
+    {
+      "id": "TASK-009",
+      "category": "functional",
+      "priority": "critical",
+      "description": "Pydantic модели: CdcEvent, RawSnapshot",
+      "acceptance_criteria": [
+        "models/cdc.py: класс CdcEvent с полями event_type (Literal['INSERT','UPDATE','DELETE']), route_id, source, flight_key, old_price, new_price, changed_fields (dict), occurred_at",
+        "models/storage.py: класс RawSnapshot с полями source, route_id, file_path, records_count, scraped_at",
+        "flight_key — строка-ключ вида 'provider:flight_number:departure_time'",
+        "CdcEvent.changed_fields — словарь {field: {old: val, new: val}}"
+      ],
+      "test_steps": [
+        "Шаг 1: python -c 'from models.cdc import CdcEvent' — импорт без ошибок",
+        "Шаг 2: Создать CdcEvent с event_type='INVALID' — ValidationError",
+        "Шаг 3: python -m pytest tests/test_models.py — все тесты проходят"
+      ],
+      "dependencies": ["TASK-001"],
+      "status": "pending"
+    },
+    {
+      "id": "TASK-010",
+      "category": "functional",
+      "priority": "critical",
+      "description": "Абстрактный базовый класс Connector",
+      "acceptance_criteria": [
+        "connectors/base.py: абстрактный класс BaseConnector с абстрактным методом fetch(route: Route, mapping: SourceMapping) -> list[Flight]",
+        "Метод fetch должен: принять маршрут и маппинг источника, вернуть список Flight",
+        "Базовый класс содержит общую логику: логирование старта/финиша, обработку исключений (возвращает [] при ошибке, не падает)",
+        "Атрибут source_name: str обязателен у всех наследников"
+      ],
+      "test_steps": [
+        "Шаг 1: python -c 'from connectors.base import BaseConnector' — импорт без ошибок",
+        "Шаг 2: Попробовать инстанцировать BaseConnector напрямую — TypeError (абстрактный класс)",
+        "Шаг 3: Создать тестовый DummyConnector(BaseConnector) без реализации fetch — TypeError при инстанцировании"
+      ],
+      "dependencies": ["TASK-008"],
+      "status": "pending"
+    },
+    {
+      "id": "TASK-011",
+      "category": "functional",
+      "priority": "critical",
+      "description": "Raw Storage модуль: сохранение JSON и логирование в raw_snapshots",
+      "acceptance_criteria": [
+        "storage/raw.py: функция save_raw(data: dict, source: str, route_id: int) -> RawSnapshot",
+        "Файлы сохраняются по пути: raw_storage/{source}/{route_id}/{timestamp}.json",
+        "После сохранения файла запись добавляется в таблицу raw_snapshots",
+        "Функция load_raw(snapshot_id: int) -> dict для повторного парсинга",
+        "Директории создаются автоматически если не существуют"
+      ],
+      "test_steps": [
+        "Шаг 1: Вызвать save_raw({'test': 1}, 'aviasales', 1) — файл создан в raw_storage/",
+        "Шаг 2: SELECT * FROM raw_snapshots — запись появилась",
+        "Шаг 3: Вызвать load_raw(snapshot_id) — возвращает тот же dict",
+        "Шаг 4: Вызвать save_raw дважды — два разных файла (уникальный timestamp в имени)"
+      ],
+      "dependencies": ["TASK-004", "TASK-009"],
+      "status": "pending"
+    },
+    {
+      "id": "TASK-012",
+      "category": "integration",
+      "priority": "critical",
+      "description": "Aviasales коннектор: перехват XHR через Playwright и получение сырого JSON",
+      "acceptance_criteria": [
+        "connectors/aviasales.py: класс AviasalesConnector(BaseConnector)",
+        "Playwright запускается в headless режиме",
+        "Коннектор перехватывает XHR запрос к внутреннему API Aviasales (не парсит HTML)",
+        "Возвращает сырой JSON-ответ с результатами поиска",
+        "Playwright сессия закрывается после каждого запроса (context manager)",
+        "При недоступности сайта или timeout — логирует ошибку, возвращает None"
+      ],
+      "test_steps": [
+        "Шаг 1: Запустить коннектор для маршрута HAN→KUL с тестовой датой",
+        "Шаг 2: Убедиться что raw JSON получен (не пустой, содержит данные о рейсах)",
+        "Шаг 3: Сохранить raw JSON в файл и убедиться что он читаем",
+        "Шаг 4: Симулировать недоступность сети — коннектор должен вернуть None без исключения"
+      ],
+      "dependencies": ["TASK-010", "TASK-005"],
+      "status": "pending"
+    },
+    {
+      "id": "TASK-013",
+      "category": "integration",
+      "priority": "critical",
+      "description": "Aviasales парсер: raw JSON → list[Flight]",
+      "acceptance_criteria": [
+        "parser/aviasales.py: функция parse_aviasales(raw: dict, route_id: int) -> list[Flight]",
+        "Все обязательные поля Flight заполнены из raw JSON",
+        "Цена нормализована в Decimal, время — timezone-aware datetime",
+        "Рейсы без flight_number допустимы (поле опционально)",
+        "Если поле отсутствует в ответе — логируется предупреждение, запись пропускается (не падает)"
+      ],
+      "test_steps": [
+        "Шаг 1: Загрузить сохранённый raw JSON из TASK-012",
+        "Шаг 2: Вызвать parse_aviasales(raw, route_id=1) — список Flight не пустой",
+        "Шаг 3: Проверить первый Flight: все поля заполнены, price > 0, departure_time > now",
+        "Шаг 4: python -m pytest tests/test_parsers.py::test_aviasales — проходит"
+      ],
+      "dependencies": ["TASK-008", "TASK-012"],
+      "status": "pending"
+    },
+    {
+      "id": "TASK-014",
+      "category": "integration",
+      "priority": "high",
+      "description": "Trip.com коннектор + парсер: XHR перехват и raw JSON → list[Flight]",
+      "acceptance_criteria": [
+        "connectors/trip.py: класс TripConnector(BaseConnector)",
+        "parser/trip.py: функция parse_trip(raw: dict, route_id: int) -> list[Flight]",
+        "Та же логика что у Aviasales: XHR перехват, не HTML парсинг",
+        "Результат парсинга — объекты Flight в единой модели (без специфики Trip.com)"
+      ],
+      "test_steps": [
+        "Шаг 1: Запустить TripConnector для маршрута KUL→CMB",
+        "Шаг 2: Получен непустой raw JSON",
+        "Шаг 3: parse_trip(raw, route_id=2) возвращает список Flight с заполненными полями",
+        "Шаг 4: python -m pytest tests/test_parsers.py::test_trip — проходит"
+      ],
+      "dependencies": ["TASK-010", "TASK-005"],
+      "status": "pending"
+    },
+    {
+      "id": "TASK-015",
+      "category": "integration",
+      "priority": "high",
+      "description": "Agoda коннектор + парсер: XHR перехват и raw JSON → list[Flight]",
+      "acceptance_criteria": [
+        "connectors/agoda.py: класс AgodaConnector(BaseConnector)",
+        "parser/agoda.py: функция parse_agoda(raw: dict, route_id: int) -> list[Flight]",
+        "Та же логика что у Aviasales и Trip",
+        "Результат — объекты Flight в единой модели"
+      ],
+      "test_steps": [
+        "Шаг 1: Запустить AgodaConnector для маршрута CMB→MOW",
+        "Шаг 2: Получен непустой raw JSON",
+        "Шаг 3: parse_agoda(raw, route_id=3) возвращает список Flight",
+        "Шаг 4: python -m pytest tests/test_parsers.py::test_agoda — проходит"
+      ],
+      "dependencies": ["TASK-010", "TASK-005"],
+      "status": "pending"
+    },
+    {
+      "id": "TASK-016",
+      "category": "functional",
+      "priority": "critical",
+      "description": "Search Planner: читает enabled маршруты + маппинги, запускает коннекторы, сохраняет raw",
+      "acceptance_criteria": [
+        "planner/search_planner.py: функция run_search_for_route(route_id: int) -> dict[str, list[Flight]]",
+        "Читает маршрут из БД по route_id",
+        "Для каждого источника проверяет наличие маппинга (source_route_mappings.enabled=true)",
+        "Для каждого активного маппинга запускает соответствующий коннектор",
+        "Сохраняет raw JSON через Raw Storage (TASK-011)",
+        "Возвращает словарь {source_name: [Flight, ...]}",
+        "Если маппинг для источника отсутствует — пропускает источник с INFO логом"
+      ],
+      "test_steps": [
+        "Шаг 1: Вызвать run_search_for_route(route_id=1)",
+        "Шаг 2: Результат содержит ключи 'aviasales', 'trip', 'agoda'",
+        "Шаг 3: Каждый список непустой (рейсы найдены)",
+        "Шаг 4: SELECT * FROM raw_snapshots — 3 новые записи (по одной на источник)",
+        "Шаг 5: Отключить один маппинг (enabled=false), повторить — в результате только 2 источника"
+      ],
+      "dependencies": ["TASK-011", "TASK-013", "TASK-014", "TASK-015"],
+      "status": "pending"
+    },
+    {
+      "id": "TASK-017",
+      "category": "functional",
+      "priority": "critical",
+      "description": "CDC Engine: сравнение двух snapshot'ов и генерация списка CdcEvent",
+      "acceptance_criteria": [
+        "cdc/engine.py: функция compare_snapshots(previous: list[Flight], current: list[Flight]) -> list[CdcEvent]",
+        "Ключ сравнения: (provider, flight_number, departure_time, route_id)",
+        "INSERT: рейс есть в current, отсутствует в previous",
+        "UPDATE: рейс есть в обоих, изменилось любое поле (price, duration, stops, ...)",
+        "DELETE: рейс есть в previous, отсутствует в current",
+        "changed_fields содержит только изменённые поля с {old, new} значениями",
+        "Функция чистая (pure function) — не обращается к БД"
+      ],
+      "test_steps": [
+        "Шаг 1: Создать два списка Flight с известными различиями (1 новый, 1 изменённый, 1 удалённый)",
+        "Шаг 2: compare_snapshots(prev, curr) — возвращает ровно 3 события",
+        "Шаг 3: Проверить типы: один INSERT, один UPDATE, один DELETE",
+        "Шаг 4: UPDATE.changed_fields содержит изменённые поля",
+        "Шаг 5: python -m pytest tests/test_cdc.py — все тесты проходят"
+      ],
+      "dependencies": ["TASK-009"],
+      "status": "pending"
+    },
+    {
+      "id": "TASK-018",
+      "category": "functional",
+      "priority": "critical",
+      "description": "Warehouse: обновление flights_current по результатам CDC",
+      "acceptance_criteria": [
+        "warehouse/current.py: функция apply_cdc_to_current(events: list[CdcEvent], flights: list[Flight]) -> None",
+        "INSERT: добавляет запись в flights_current",
+        "UPDATE: обновляет запись в flights_current",
+        "DELETE: удаляет запись из flights_current",
+        "Операции выполняются в одной транзакции",
+        "При конфликте уникального ключа на INSERT — выполняет UPDATE (upsert)"
+      ],
+      "test_steps": [
+        "Шаг 1: Применить INSERT событие — запись появилась в flights_current",
+        "Шаг 2: Применить UPDATE событие — цена обновилась в flights_current",
+        "Шаг 3: Применить DELETE событие — запись удалена из flights_current",
+        "Шаг 4: Применить пакет из 10 событий — все применены в одной транзакции",
+        "Шаг 5: Симулировать ошибку в середине пакета — все изменения откатились (rollback)"
+      ],
+      "dependencies": ["TASK-004", "TASK-017"],
+      "status": "pending"
+    },
+    {
+      "id": "TASK-019",
+      "category": "functional",
+      "priority": "critical",
+      "description": "Warehouse: запись истории изменений в flights_history (SCD Type 2)",
+      "acceptance_criteria": [
+        "warehouse/history.py: функция append_history(events: list[CdcEvent], flights: list[Flight]) -> None",
+        "При UPDATE: текущая запись в flights_history закрывается (valid_to = now, is_current = false), добавляется новая (valid_from = now, valid_to = null, is_current = true)",
+        "При INSERT: добавляется запись (valid_from = now, valid_to = null, is_current = true)",
+        "При DELETE: текущая запись закрывается (valid_to = now, is_current = false)",
+        "История никогда не удаляется — только добавляется"
+      ],
+      "test_steps": [
+        "Шаг 1: INSERT рейса → 1 запись в history с is_current=true",
+        "Шаг 2: UPDATE цены → 2 записи: старая (is_current=false), новая (is_current=true)",
+        "Шаг 3: DELETE → 2 записи, обе is_current=false",
+        "Шаг 4: SELECT * FROM flights_history WHERE is_current=true — совпадает с flights_current"
+      ],
+      "dependencies": ["TASK-004", "TASK-017"],
+      "status": "pending"
+    },
+    {
+      "id": "TASK-020",
+      "category": "functional",
+      "priority": "critical",
+      "description": "Warehouse: запись CDC событий в cdc_events",
+      "acceptance_criteria": [
+        "warehouse/events.py: функция save_cdc_events(events: list[CdcEvent]) -> None",
+        "Все события из списка сохраняются в cdc_events",
+        "changed_fields сохраняется как JSONB",
+        "occurred_at берётся из CdcEvent.occurred_at",
+        "Batch insert (не N отдельных INSERT)"
+      ],
+      "test_steps": [
+        "Шаг 1: Вызвать save_cdc_events([event1, event2, event3])",
+        "Шаг 2: SELECT COUNT(*) FROM cdc_events — 3 новые записи",
+        "Шаг 3: Проверить JSONB поле: SELECT changed_fields FROM cdc_events LIMIT 1 — читаемый JSON",
+        "Шаг 4: Передать пустой список — никаких ошибок, 0 вставок"
+      ],
+      "dependencies": ["TASK-004", "TASK-017"],
+      "status": "pending"
+    },
+    {
+      "id": "TASK-021",
+      "category": "integration",
+      "priority": "critical",
+      "description": "Сборка полного pipeline для одного маршрута: Planner → CDC → Warehouse",
+      "acceptance_criteria": [
+        "scheduler/pipeline.py: функция run_pipeline_for_route(route_id: int) -> PipelineResult",
+        "Последовательность: Search Planner → получить предыдущий snapshot из flights_current → CDC Engine → apply_cdc_to_current → append_history → save_cdc_events",
+        "PipelineResult содержит: route_id, source, events_count по типам, duration_seconds, errors",
+        "При первом запуске (нет предыдущего snapshot) — все рейсы INSERT",
+        "Логирование каждого шага с временными метками"
+      ],
+      "test_steps": [
+        "Шаг 1: Очистить flights_current, запустить run_pipeline_for_route(1) — все рейсы INSERT",
+        "Шаг 2: Запустить повторно через минуту — минимум событий (рейсы те же)",
+        "Шаг 3: Вручную изменить цену в flights_current, запустить — появился UPDATE в cdc_events",
+        "Шаг 4: Проверить flights_history — история корректна",
+        "Шаг 5: PipelineResult.errors пустой"
+      ],
+      "dependencies": ["TASK-016", "TASK-018", "TASK-019", "TASK-020"],
+      "status": "pending"
+    },
+    {
+      "id": "TASK-022",
+      "category": "integration",
+      "priority": "high",
+      "description": "Prefect flow: оркестрация pipeline для всех активных маршрутов по расписанию",
+      "acceptance_criteria": [
+        "scheduler/flow.py: Prefect @flow run_all_routes()",
+        "Читает все маршруты с enabled=true из БД",
+        "Для каждого маршрута запускает run_pipeline_for_route как отдельный @task",
+        "Интервал запуска настраивается через переменную окружения POLL_INTERVAL_MINUTES",
+        "Flow задеплоен в Prefect server и доступен в UI",
+        "Маршруты с более высоким priority запускаются первыми"
+      ],
+      "test_steps": [
+        "Шаг 1: Открыть Prefect UI на localhost:4200",
+        "Шаг 2: Найти flow run_all_routes — он задеплоен",
+        "Шаг 3: Запустить flow вручную через UI",
+        "Шаг 4: В логах Prefect виден запуск для каждого маршрута",
+        "Шаг 5: После завершения — в cdc_events и flights_current есть свежие данные"
+      ],
+      "dependencies": ["TASK-006", "TASK-021"],
+      "status": "pending"
+    },
+    {
+      "id": "TASK-023",
+      "category": "integration",
+      "priority": "high",
+      "description": "Telegram Bot: базовая настройка и функция отправки сообщения",
+      "acceptance_criteria": [
+        "notifications/telegram.py: функция send_notification(message: str) -> bool",
+        "Токен и chat_id берутся из .env",
+        "Функция возвращает True при успехе, False при ошибке (не бросает исключение)",
+        "Поддержка Markdown-форматирования в сообщениях",
+        "Логирование успешной отправки и ошибок"
+      ],
+      "test_steps": [
+        "Шаг 1: Заполнить TELEGRAM_BOT_TOKEN и TELEGRAM_CHAT_ID в .env",
+        "Шаг 2: Вызвать send_notification('Тест: pipeline запущен') — сообщение пришло в Telegram",
+        "Шаг 3: Передать невалидный токен — функция вернула False, не упала",
+        "Шаг 4: Передать пустую строку — функция вернула False"
+      ],
+      "dependencies": ["TASK-001"],
+      "status": "pending"
+    },
+    {
+      "id": "TASK-024",
+      "category": "functional",
+      "priority": "high",
+      "description": "Движок правил уведомлений: проверка CDC событий против пороговых условий",
+      "acceptance_criteria": [
+        "notifications/rules.py: функция check_notification_rules(event: CdcEvent, route: Route) -> NotificationTrigger | None",
+        "Правило 1: event.new_price < route.max_price (если max_price задан)",
+        "Правило 2: снижение цены более чем на N% (константа или настройка в .env)",
+        "Правило 3: новый исторический минимум (запрос к flights_history)",
+        "Если сработало правило — возвращает NotificationTrigger с причиной и данными для сообщения",
+        "Если ни одно не сработало — возвращает None"
+      ],
+      "test_steps": [
+        "Шаг 1: Создать UPDATE-событие с new_price < max_price — check вернул NotificationTrigger",
+        "Шаг 2: Создать UPDATE с падением цены на 20% — сработало правило процента",
+        "Шаг 3: Создать INSERT с ценой ниже всех исторических — сработало правило минимума",
+        "Шаг 4: Создать UPDATE без существенных изменений — вернул None",
+        "Шаг 5: python -m pytest tests/test_notifications.py — все тесты проходят"
+      ],
+      "dependencies": ["TASK-009", "TASK-023"],
+      "status": "pending"
+    },
+    {
+      "id": "TASK-025",
+      "category": "functional",
+      "priority": "medium",
+      "description": "Дедупликация уведомлений: не отправлять повторы в рамках временного окна",
+      "acceptance_criteria": [
+        "notifications/dedup.py: функция should_send(event: CdcEvent, rule_type: str) -> bool",
+        "Хранит последние отправленные уведомления в БД или in-memory кэше",
+        "Не отправляет повторное уведомление для того же (route_id, flight_key, rule_type) в течение DEDUP_WINDOW_HOURS",
+        "DEDUP_WINDOW_HOURS настраивается через .env (по умолчанию 4 часа)",
+        "Интегрировано в основной notification flow"
+      ],
+      "test_steps": [
+        "Шаг 1: should_send для нового события — True",
+        "Шаг 2: Повторный вызов should_send для того же события — False",
+        "Шаг 3: Вызов через DEDUP_WINDOW_HOURS — снова True",
+        "Шаг 4: Разные rule_type для одного рейса — оба отправляются"
+      ],
+      "dependencies": ["TASK-024"],
+      "status": "pending"
+    },
+    {
+      "id": "TASK-026",
+      "category": "ui",
+      "priority": "medium",
+      "description": "Grafana: подключение PostgreSQL как datasource через provisioning",
+      "acceptance_criteria": [
+        "dashboard/provisioning/datasources/postgres.yaml создан",
+        "Datasource использует переменные окружения для подключения",
+        "После docker compose up datasource автоматически доступен в Grafana (не нужно настраивать вручную)",
+        "Проверить соединение в Grafana UI — статус 'Data source is working'"
+      ],
+      "test_steps": [
+        "Шаг 1: docker compose up -d grafana",
+        "Шаг 2: Открыть Grafana → Connections → Data Sources",
+        "Шаг 3: PostgreSQL datasource присутствует",
+        "Шаг 4: Нажать 'Test' — 'Data source is working'",
+        "Шаг 5: Выполнить тестовый SQL: SELECT COUNT(*) FROM routes — результат отображается"
+      ],
+      "dependencies": ["TASK-007", "TASK-004"],
+      "status": "pending"
+    },
+    {
+      "id": "TASK-027",
+      "category": "ui",
+      "priority": "medium",
+      "description": "Grafana дашборд: история цен и min/avg по маршрутам",
+      "acceptance_criteria": [
+        "dashboard/provisioning/dashboards/price_history.json создан",
+        "Панель 1: график изменения цены по времени (из flights_history) с фильтром по маршруту",
+        "Панель 2: минимальная цена за всё время по маршруту",
+        "Панель 3: средняя цена за последние 7 дней",
+        "Дашборд автоматически загружается при старте Grafana (provisioning)",
+        "Переменная маршрута в шапке дашборда (dropdown из таблицы routes)"
+      ],
+      "test_steps": [
+        "Шаг 1: docker compose up -d grafana",
+        "Шаг 2: Grafana → Dashboards — дашборд 'Price History' присутствует",
+        "Шаг 3: Выбрать маршрут в dropdown — графики обновились",
+        "Шаг 4: Если данных нет — панели показывают 'No data' без ошибок"
+      ],
+      "dependencies": ["TASK-026"],
+      "status": "pending"
+    },
+    {
+      "id": "TASK-028",
+      "category": "ui",
+      "priority": "low",
+      "description": "Grafana дашборд: лучшие предложения и активность CDC",
+      "acceptance_criteria": [
+        "dashboard/provisioning/dashboards/overview.json создан",
+        "Панель 1: топ-5 лучших текущих предложений (из flights_current, sorted by price)",
+        "Панель 2: количество CDC событий по типам за последние 24 часа (bar chart)",
+        "Панель 3: количество успешных запросов по источникам (из raw_snapshots)",
+        "Дашборд автоматически загружается через provisioning"
+      ],
+      "test_steps": [
+        "Шаг 1: Grafana → Dashboards — дашборд 'Overview' присутствует",
+        "Шаг 2: После запуска pipeline — панели показывают актуальные данные",
+        "Шаг 3: Bar chart CDC событий корректно разделяет INSERT/UPDATE/DELETE"
+      ],
+      "dependencies": ["TASK-026"],
+      "status": "pending"
+    },
+    {
+      "id": "TASK-029",
+      "category": "functional",
+      "priority": "low",
+      "description": "Prometheus метрики: счётчики pipeline и коннекторов",
+      "acceptance_criteria": [
+        "metrics/prometheus.py: определены метрики: connector_requests_total (counter, labels: source, status), cdc_events_total (counter, labels: event_type), pipeline_duration_seconds (histogram, labels: route_id), connector_flights_found (gauge, labels: source)",
+        "Метрики экспортируются на /metrics endpoint (порт 8000 или через docker-compose)",
+        "Prometheus scrape config настроен в prometheus.yml",
+        "Метрики обновляются при каждом запуске pipeline"
+      ],
+      "test_steps": [
+        "Шаг 1: Запустить pipeline",
+        "Шаг 2: curl http://localhost:8000/metrics | grep connector_requests_total — метрика присутствует",
+        "Шаг 3: Открыть Prometheus UI → Graph — ввести connector_requests_total, данные видны",
+        "Шаг 4: Запустить pipeline ещё раз — counter увеличился"
+      ],
+      "dependencies": ["TASK-022"],
+      "status": "pending"
+    }
+  ]
+}
