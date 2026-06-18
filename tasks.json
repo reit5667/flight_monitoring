@@ -708,6 +708,30 @@
         "TASK-022"
       ],
       "status": "done"
+    },
+    {
+      "id": "TASK-030",
+      "category": "integration",
+      "priority": "medium",
+      "description": "Отладка Playwright-коннекторов Trip.com и Agoda: реальный XHR-перехват",
+      "acceptance_criteria": [
+        "TripConnector.fetch() возвращает непустой список Flight для маршрута KUL→CMB",
+        "AgodaConnector.fetch() возвращает непустой список Flight для маршрута CMB→MOW",
+        "XHR-паттерны (URL-фильтры) актуальны и соответствуют реальным ответам сайтов",
+        "Коннекторы работают в headless=True режиме (не только в headed)",
+        "raw_snapshots.records_count > 0 после прогона pipeline"
+      ],
+      "test_steps": [
+        "Шаг 1: Запустить TripConnector вручную для KUL→CMB, получить непустой raw JSON",
+        "Шаг 2: Запустить AgodaConnector вручную для CMB→MOW, получить непустой raw JSON",
+        "Шаг 3: run_pipeline_for_route(2) — sources_processed содержит 'trip', events_count['INSERT'] > 0",
+        "Шаг 4: SELECT records_count FROM raw_snapshots WHERE source IN ('trip','agoda') ORDER BY scraped_at DESC LIMIT 2 — оба > 0"
+      ],
+      "dependencies": [
+        "TASK-014",
+        "TASK-015"
+      ],
+      "status": "pending"
     }
   ]
 }
