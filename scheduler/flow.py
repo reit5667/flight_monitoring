@@ -5,6 +5,7 @@ import psycopg2
 from dotenv import load_dotenv
 from prefect import flow, task
 
+from metrics.prometheus import start_metrics_server
 from models.route import Route
 from scheduler.pipeline import PipelineResult, run_pipeline_for_route
 
@@ -58,6 +59,7 @@ async def pipeline_task(route_id: int) -> PipelineResult:
 
 @flow(name="run-all-routes", log_prints=True)
 async def run_all_routes() -> list[PipelineResult]:
+    start_metrics_server(port=int(os.getenv("PROMETHEUS_PORT", "8000")))
     routes = _load_enabled_routes()
     logger.info("Found %d enabled routes (sorted by priority DESC)", len(routes))
 

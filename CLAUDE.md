@@ -83,3 +83,6 @@ Prefect Scheduler
 - **Prefect версии расходятся** — venv локально имеет Prefect 3.7, docker image — Prefect 2. `prefect_test_harness` не работает в v3; тесты flow вызываются через `.fn()`. `get_run_logger()` требует Prefect контекст — в flow.py используется стандартный `logging.getLogger`
 - **Search Planner** — коннекторы запускаются последовательно (не параллельно): Playwright создаёт тяжёлые браузерные процессы, параллельный запуск перегружает систему
 - **Pipeline устойчив к ошибкам** — ошибка в одном источнике не прерывает другие; фиксируется в `PipelineResult.errors`
+- **Notifications — умный уведомлятор**: два правила — HISTORICAL_MIN (приоритет) и SIGNIFICANT_DROP (≥15% ниже rolling avg 30 дней). `check_notification_rules` вызывается **до** warehouse write — иначе новый минимум попадёт в history и не обнаружит сам себя
+- **Telegram: ParseMode.HTML** — не MarkdownV2; MarkdownV2 требует экранирования `$`, `-`, `(`, `)` что ломает сообщения с ценами
+- **Dedup in-memory** — `notifications/dedup.py` хранит TTL-кэш в dict; `DEDUP_WINDOW_HOURS` читается в runtime (не на уровне модуля), иначе monkeypatch в тестах не работает

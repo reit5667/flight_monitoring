@@ -12,9 +12,9 @@
 
 ## Текущий трек
 
-**Активная задача:** нет
+**Активная задача:** нет (все задачи завершены)
 
-**Следующая задача:** TASK-007 — Grafana + Prometheus в Docker Compose (medium)
+**Следующая задача:** нет — 29/29 задач выполнено
 
 **Блокеры:** нет
 
@@ -24,11 +24,11 @@
 
 | Фаза | Описание | Статус |
 |---|---|---|
-| Phase 1 | Infrastructure (Docker, PostgreSQL, Prefect, Grafana) | done (TASK-006 выполнен, Grafana — позже) |
-| Phase 2 | Aviasales connector + Raw Storage | done (TASK-008..013) |
-| Phase 3 | CDC Engine + Warehouse | done (TASK-017..020) |
+| Phase 1 | Infrastructure (Docker, PostgreSQL, Prefect, Grafana) | done |
+| Phase 2 | Aviasales connector + Raw Storage | done |
+| Phase 3 | CDC Engine + Warehouse | done |
 | Phase 4 | Trip.com + Agoda connectors + Orchestration | done |
-| Phase 5 | Notifications + Analytics | not started |
+| Phase 5 | Notifications + Analytics | **done** (TASK-023..029) |
 
 ---
 
@@ -38,9 +38,9 @@
 |---|---|---|
 | critical | 14 | 14 |
 | high | 10 | 5 |
-| medium | 4 | 0 |
-| low | 1 | 0 |
-| **Итого** | **29** | **24** |
+| medium | 4 | 4 |
+| low | 2 | 2 |
+| **Итого** | **29** | **29** |
 
 ---
 
@@ -75,6 +75,11 @@
 | 2026-06-18 | TASK-023 | notifications/telegram.py; async send_notification → bool; ParseMode.HTML (не MarkdownV2 — экранирование мешало бы ценам); 5/5 тестов; .env.example: PRICE_DROP_THRESHOLD_PCT=15 |
 | 2026-06-18 | TASK-024 | notifications/rules.py; NotificationTrigger (Pydantic); 2 правила: HISTORICAL_MIN (приоритет) + SIGNIFICANT_DROP (rolling avg 30 дней, 15%); вызывать ДО warehouse write; 8 тестов → 13/13 total |
 | 2026-06-18 | TASK-025 | notifications/dedup.py; in-memory dict (worker живёт постоянно → state сохраняется); DEDUP_WINDOW_HOURS читается в runtime (monkeypatch); backdating cache в тестах вместо freezegun; 5 тестов → 18/18 total |
+| 2026-06-18 | TASK-007 | grafana/grafana:10.4.2 + prom/prometheus:v2.51.0 добавлены в docker-compose.yml; prometheus.yml создан; grafana_data + prometheus_data volumes; оба UI доступны; GRAFANA_PASSWORD в .env.example |
+| 2026-06-18 | TASK-026 | dashboard/provisioning/datasources/postgres.yaml; POSTGRES_HOST=postgres в grafana env (Docker service name, не localhost); health check: "Database Connection OK"; SELECT COUNT(*) FROM routes = 3 |
+| 2026-06-18 | TASK-027 | provider.yaml + price_history.json; 3 панели: timeseries (история цен), stat (min всё время), stat (avg 7 дней); dropdown маршрутов из routes; дашборд "Price History" загружен в Grafana |
+| 2026-06-18 | TASK-028 | overview.json; 3 панели: table (топ-5 из flights_current), barchart (CDC события 24ч по типам), barchart (запросы по источникам из raw_snapshots); дашборд "Overview" загружен в Grafana |
+| 2026-06-18 | TASK-029 | metrics/prometheus.py: 4 метрики (counter ×2, histogram, gauge); start_metrics_server() в flow.py; метрики интегрированы в pipeline.py; Prometheus scrape подтверждён через API |
 
 ---
 

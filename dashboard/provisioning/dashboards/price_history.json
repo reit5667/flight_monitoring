@@ -1,0 +1,202 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "description": "История цен на авиабилеты по маршрутам",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "flight_monitor_pg"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "Цена (USD)",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "hideFrom": {"legend": false, "tooltip": false, "viz": false},
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": {"type": "linear"},
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {"group": "A", "mode": "none"},
+            "thresholdsStyle": {"mode": "off"}
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "red", "value": 80}
+            ]
+          },
+          "unit": "currencyUSD"
+        },
+        "overrides": []
+      },
+      "gridPos": {"h": 10, "w": 24, "x": 0, "y": 0},
+      "id": 1,
+      "options": {
+        "legend": {"calcs": ["min", "mean", "last"], "displayMode": "table", "placement": "bottom", "showLegend": true},
+        "tooltip": {"mode": "multi", "sort": "none"}
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "flight_monitor_pg"
+          },
+          "editorMode": "code",
+          "format": "time_series",
+          "rawSql": "SELECT\n  valid_from AS \"time\",\n  price::float AS \"Цена\",\n  source AS metric\nFROM flights_history\nWHERE\n  route_id = $route_id\n  AND $__timeFilter(valid_from)\nORDER BY valid_from",
+          "refId": "A",
+          "sql": {"columns": [], "groupBy": [], "limit": 50}
+        }
+      ],
+      "title": "История цен",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "flight_monitor_pg"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {"fixedColor": "green", "mode": "fixed"},
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{"color": "green", "value": null}]
+          },
+          "unit": "currencyUSD"
+        },
+        "overrides": []
+      },
+      "gridPos": {"h": 5, "w": 12, "x": 0, "y": 10},
+      "id": 2,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "flight_monitor_pg"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawSql": "SELECT MIN(price::float) AS \"Мин. цена (всё время)\"\nFROM flights_history\nWHERE route_id = $route_id",
+          "refId": "A",
+          "sql": {"columns": [], "groupBy": [], "limit": 50}
+        }
+      ],
+      "title": "Минимальная цена (всё время)",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "flight_monitor_pg"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {"fixedColor": "blue", "mode": "fixed"},
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{"color": "blue", "value": null}]
+          },
+          "unit": "currencyUSD",
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "gridPos": {"h": 5, "w": 12, "x": 12, "y": 10},
+      "id": 3,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "flight_monitor_pg"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawSql": "SELECT ROUND(AVG(price::float)::numeric, 0)::float AS \"Ср. цена (7 дней)\"\nFROM flights_history\nWHERE\n  route_id = $route_id\n  AND valid_from >= NOW() - INTERVAL '7 days'",
+          "refId": "A",
+          "sql": {"columns": [], "groupBy": [], "limit": 50}
+        }
+      ],
+      "title": "Средняя цена (последние 7 дней)",
+      "type": "stat"
+    }
+  ],
+  "refresh": "5m",
+  "schemaVersion": 38,
+  "tags": ["flight-monitor"],
+  "templating": {
+    "list": [
+      {
+        "current": {},
+        "datasource": {
+          "type": "grafana-postgresql-datasource",
+          "uid": "flight_monitor_pg"
+        },
+        "definition": "SELECT origin || ' → ' || destination AS __text, route_id::text AS __value FROM routes WHERE enabled = true ORDER BY priority",
+        "hide": 0,
+        "includeAll": false,
+        "label": "Маршрут",
+        "multi": false,
+        "name": "route_id",
+        "options": [],
+        "query": "SELECT origin || ' → ' || destination AS __text, route_id::text AS __value FROM routes WHERE enabled = true ORDER BY priority",
+        "refresh": 2,
+        "sort": 0,
+        "type": "query"
+      }
+    ]
+  },
+  "time": {"from": "now-30d", "to": "now"},
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "Price History",
+  "uid": "price-history-v1",
+  "version": 1
+}

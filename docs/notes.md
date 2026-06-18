@@ -755,3 +755,166 @@ def reset_dedup_cache():
 ```bash
 PREFECT_API_URL=http://localhost:4200/api python scheduler/deploy.py
 ```
+
+---
+
+## Как запустить и потрогать проект руками
+
+### Запуск инфраструктуры
+
+```bash
+docker compose up -d postgres grafana prometheus
+# Prefect опционально, нужен только для scheduled runs:
+docker compose up -d prefect-server prefect-worker
+```
+
+### Открыть UI
+
+| Сервис | URL | Логин |
+|---|---|---|
+| Grafana | http://localhost:3000 | admin / admin |
+| Prometheus | http://localhost:9090 | — |
+| Prefect | http://localhost:4200 | — |
+
+В Grafana → **Dashboards**: "Price History" (dropdown маршрутов) и "Overview" (топ-5 + CDC + коннекторы).
+
+### Запустить pipeline вручную
+
+```bash
+# Активировать venv
+source .venv/bin/activate
+
+# Запустить pipeline для маршрута 1 (HAN→KUL)
+python -c "import asyncio; from scheduler.pipeline import run_pipeline_for_route; asyncio.run(run_pipeline_for_route(1))"
+
+# Проверить результат
+docker compose exec postgres psql -U flight_user -d flight_monitor -c "SELECT COUNT(*) FROM flights_current; SELECT COUNT(*) FROM cdc_events;"
+```
+
+После первого запуска `flights_current` заполнится рейсами и Grafana Price History оживёт.
+
+### Состояние DWH после разработки
+
+- `routes` — 3 маршрута: HAN→KUL (prio 90), CMB→MOW (prio 80), KUL→CMB (prio 70)
+- `source_route_mappings` — 9 записей (3 маршрута × 3 источника)
+- `raw_snapshots` — 27 записей от тестовых запусков (один реальный: aviasales route 1, 42 рейса)
+- `flights_current`, `flights_history`, `cdc_events` — пустые, заполнятся после первого запуска pipeline
+
+### Как работает CDC (объяснение)
+
+CDC — это алгоритм diff двух списков рейсов.
+
+**Первый запуск:** `previous = []`, `current = [42 рейса]` → 42 события INSERT → все попадают в `flights_current` и `flights_history`.
+
+**Следующий запуск (через час):** `previous` берётся из `flights_current` (что было). `current` — свежий ответ коннектора. `compare_snapshots` делает diff по ключу `(provider, flight_number, departure_time, route_id)`:
+- Рейс есть только в `current` → INSERT
+- Рейс есть в обоих, поля изменились → UPDATE с `changed_fields = {field: {old, new}}`
+- Рейс есть только в `previous` → DELETE
+
+CDC — чистая функция (`cdc/engine.py`): принимает два списка, возвращает события. Не трогает БД. Это позволяет:
+- Тестировать без Docker
+- Перепарсить старый raw-файл и прогнать через CDC заново
+- Легко отлаживать — виден точный diff
+
+После CDC warehouse-функции (`warehouse/current.py`, `history.py`, `events.py`) применяют события в БД. Уведомления проверяются **до** записи в warehouse — иначе новый минимум сам себя не обнаружит (он уже будет в `flights_history`).
+
+---
+
+## TASK-028 + TASK-029 — Grafana Overview и Prometheus метрики
+
+### TASK-028: дашборд Overview
+
+Три панели: `table` (топ-5 предложений из `flights_current`), `barchart` (CDC события по типам за 24ч из `cdc_events`), `barchart` (запросы по источникам из `raw_snapshots`).
+
+Grafana автоматически подхватила новый `overview.json` через провайдер (`updateIntervalSeconds: 30`) — не нужно было перезапускать контейнер.
+
+В bar chart CDC-панели используется color override по имени серии (`INSERT`=green, `UPDATE`=blue, `DELETE`=red) — это стандартный механизм Grafana overrides, работает когда серии имеют предсказуемые имена.
+
+### TASK-029: Prometheus метрики
+
+Файл `metrics/prometheus.py` — единое место определения всех метрик. Важный паттерн: метрики определяются на уровне модуля (при импорте), а не внутри функций. Это стандарт prometheus_client — если создать Counter дважды с одним именем, библиотека выбросит исключение.
+
+**`_server_started` флаг**: `start_http_server()` нельзя вызвать дважды — это OSError. Флаг нужен потому что `run_all_routes` — это Prefect flow, и в одном worker-процессе flow может запускаться много раз. Без флага каждый запуск пытался бы занять порт.
+
+**Интеграция в pipeline.py**:
+- `connector_flights_found` устанавливается сразу после получения результата от коннектора (Gauge — текущее состояние)
+- `connector_requests_total` инкрементируется в конце source-блока: success или error (Counter — накопительно)
+- `cdc_events_total` инкрементируется внутри цикла по events
+- `pipeline_duration_seconds` обсервируется после цикла по источникам с полной длительностью pipeline
+
+**`pipeline_duration_seconds` — Histogram, не Summary**: Histogram позволяет агрегировать по нескольким инстансам и вычислять квантили в Prometheus. Summary считает квантили локально и не агрегируется. Для pipeline-метрики Histogram правильный выбор.
+
+---
+
+## TASK-027 — Grafana дашборд: история цен
+
+### Что добавили
+
+Два файла:
+- `dashboard/provisioning/dashboards/provider.yaml` — регистрирует провайдер: говорит Grafana "смотри JSON-дашборды в этой же директории"
+- `dashboard/provisioning/dashboards/price_history.json` — дашборд "Price History" с тремя панелями
+
+### Как устроен provisioning дашбордов
+
+Grafana читает `provisioning/dashboards/*.yaml` при старте. Каждый YAML описывает "провайдер" — источник дашбордов. Провайдер типа `file` говорит "ищи JSON-файлы по этому пути и загружай их как дашборды". Мы указали `path: /etc/grafana/provisioning/dashboards` — тот же каталог, где лежат и YAML и JSON. Это самый простой вариант: всё в одном месте.
+
+### Переменная маршрута (template variable)
+
+Dropdown маршрутов реализован через Grafana template variable типа `query`. Запрос:
+```sql
+SELECT origin || ' → ' || destination AS __text, route_id::text AS __value
+FROM routes WHERE enabled = true ORDER BY priority
+```
+`__text` — то, что видит пользователь в dropdown. `__value` — то, что подставляется в запросы панелей как `$route_id`.
+
+### Почему `price::float`
+
+Колонка `price` в БД типа `NUMERIC` (Decimal). Grafana PostgreSQL datasource возвращает NUMERIC как строку, а не число — тогда time series панель не может построить график. Приведение `price::float` конвертирует в float8 и Grafana корректно строит числовую ось.
+
+### `allowUiUpdates: false` в провайдере
+
+Запрещает сохранять изменения дашборда через UI обратно в файл. Если разрешить (`true`), Grafana будет перезаписывать JSON-файл — это нарушает идею "дашборд как код". При `false` кнопка "Save" в UI показывает предупреждение, но дашборд продолжает работать.
+
+---
+
+## TASK-026 — Grafana PostgreSQL datasource через provisioning
+
+### Что добавили
+
+`dashboard/provisioning/datasources/postgres.yaml` — YAML-файл, который Grafana автоматически читает при старте и создаёт datasource без ручной настройки. Это "provisioning" механизм Grafana — всё через код, ничего через UI.
+
+### Нетривиальный момент: `POSTGRES_HOST=postgres`, а не `localhost`
+
+В `.env` файле `POSTGRES_HOST=localhost` — это для запуска Python-кода на хостовой машине. Но Grafana работает внутри Docker и не видит `localhost` как PostgreSQL. Внутри Docker Compose все сервисы общаются по имени сервиса — `postgres`.
+
+Решение: в `docker-compose.yml` для grafana-сервиса переопределяем переменную:
+```yaml
+environment:
+  POSTGRES_HOST: postgres  # Docker service name, overrides .env value
+```
+
+Это значение попадает в YAML через `${POSTGRES_HOST}`. Grafana подставляет переменные окружения в provisioning-файлы автоматически.
+
+### Почему `editable: false`
+
+Datasource помечен `editable: false` — это запрещает изменять его через UI. Если пользователь что-то поменяет вручную, при следующем рестарте Grafana перезапишет конфиг из YAML. `editable: false` сразу делает кнопку "Save" неактивной — меньше путаницы.
+
+---
+
+## TASK-007 — Grafana и Prometheus в Docker Compose
+
+### Что добавили
+
+В `docker-compose.yml` появились два новых сервиса: `grafana` (порт 3000) и `prometheus` (порт 9090). Оба зависят от `postgres` через `condition: service_healthy`.
+
+### Нетривиальные моменты
+
+**Два отдельных volume.** Grafana хранит дашборды в `/var/lib/grafana`, Prometheus — TSDB (time series database) в `/prometheus`. Оба volume именованные (`grafana_data`, `prometheus_data`) — данные переживают `docker compose down`.
+
+**prometheus.yml смонтирован как `:ro`.** Конфиг Prometheus монтируется read-only — сам Prometheus не должен его менять. Если забыть флаг `ro`, Docker смонтирует volume как read-write и изменения в файле на хосте не будут видны после рестарта (Docker может создать анонимный volume поверх).
+
+**`host.docker.internal` в prometheus.yml.** Target для scrape метрик приложения указан как `host.docker.internal:8000` — это DNS-имя, которое Docker на Mac/Windows резолвит в хостовую машину. На Linux нужно либо `--add-host=host.docker.internal:host-gateway`, либо указать IP хоста вручную.
+
+**Grafana provisioning.** Директория `./dashboard/provisioning` монтируется в `/etc/grafana/provisioning`. Это стандартный механизм Grafana для автоматической загрузки datasource и дашбордов при старте — следующие задачи (TASK-026, 027, 028) используют именно его.
+
+**`GF_SECURITY_ADMIN_PASSWORD`.** Пароль вынесен в `.env` через `GRAFANA_PASSWORD` (default `admin`). Grafana не стартует без пароля при первом запуске.

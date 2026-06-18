@@ -8,6 +8,12 @@ from dotenv import load_dotenv
 from pydantic import BaseModel
 
 from cdc.engine import compare_snapshots
+from metrics.prometheus import (
+    cdc_events_total,
+    connector_flights_found,
+    connector_requests_total,
+    pipeline_duration_seconds,
+)
 from models.flight import Flight
 from planner.search_planner import run_search_for_route
 from warehouse.current import apply_cdc_to_current
@@ -95,6 +101,8 @@ async def run_pipeline_for_route(route_id: int) -> PipelineResult:
         logger.info("pipeline: route_id=%d source=%s flights_fetched=%d", route_id, source, len(new_flights))
 
         try:
+            connector_flights_found.labels(source=source).set(len(new_flights))
+
             previous_flights = _load_current_flights(route_id, source)
             logger.info(
                 "pipeline: route_id=%d source=%s previous_snapshot_size=%d",
@@ -119,7 +127,9 @@ async def run_pipeline_for_route(route_id: int) -> PipelineResult:
 
             for event in events:
                 events_count[event.event_type] = events_count.get(event.event_type, 0) + 1
+                cdc_events_total.labels(event_type=event.event_type).inc()
 
+            connector_requests_total.labels(source=source, status="success").inc()
             sources_processed.append(source)
             elapsed = (datetime.now(timezone.utc) - source_start).total_seconds()
             logger.info(
@@ -131,8 +141,10 @@ async def run_pipeline_for_route(route_id: int) -> PipelineResult:
             msg = f"source={source}: {exc!r}"
             logger.exception("pipeline: route_id=%d %s", route_id, msg)
             errors.append(msg)
+            connector_requests_total.labels(source=source, status="error").inc()
 
     duration = (datetime.now(timezone.utc) - started_at).total_seconds()
+    pipeline_duration_seconds.labels(route_id=str(route_id)).observe(duration)
     result = PipelineResult(
         route_id=route_id,
         sources_processed=sources_processed,

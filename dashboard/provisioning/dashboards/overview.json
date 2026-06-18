@@ -1,0 +1,250 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "description": "Обзор: лучшие предложения, CDC активность, статистика коннекторов",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "flight_monitor_pg"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "custom": {
+            "align": "auto",
+            "cellOptions": {"type": "auto"},
+            "inspect": false
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "yellow", "value": 500},
+              {"color": "red", "value": 1000}
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {"id": "byName", "options": "price"},
+            "properties": [
+              {"id": "displayName", "value": "Цена (USD)"},
+              {"id": "unit", "value": "currencyUSD"},
+              {"id": "custom.width", "value": 120}
+            ]
+          },
+          {
+            "matcher": {"id": "byName", "options": "route"},
+            "properties": [
+              {"id": "displayName", "value": "Маршрут"},
+              {"id": "custom.width", "value": 120}
+            ]
+          },
+          {
+            "matcher": {"id": "byName", "options": "airline"},
+            "properties": [
+              {"id": "displayName", "value": "Авиакомпания"},
+              {"id": "custom.width", "value": 140}
+            ]
+          },
+          {
+            "matcher": {"id": "byName", "options": "flight_number"},
+            "properties": [
+              {"id": "displayName", "value": "Рейс"},
+              {"id": "custom.width", "value": 90}
+            ]
+          },
+          {
+            "matcher": {"id": "byName", "options": "departure_time"},
+            "properties": [
+              {"id": "displayName", "value": "Вылет"},
+              {"id": "unit", "value": "dateTimeAsLocal"},
+              {"id": "custom.width", "value": 160}
+            ]
+          },
+          {
+            "matcher": {"id": "byName", "options": "source"},
+            "properties": [
+              {"id": "displayName", "value": "Источник"},
+              {"id": "custom.width", "value": 100}
+            ]
+          }
+        ]
+      },
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 0},
+      "id": 1,
+      "options": {
+        "cellHeight": "sm",
+        "footer": {"countRows": false, "fields": "", "reducer": ["sum"], "show": false},
+        "showHeader": true,
+        "sortBy": [{"desc": false, "displayName": "Цена (USD)"}]
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "flight_monitor_pg"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawSql": "SELECT\n  fc.price::float AS price,\n  r.origin || ' → ' || r.destination AS route,\n  fc.airline,\n  fc.flight_number,\n  fc.departure_time,\n  fc.source\nFROM flights_current fc\nJOIN routes r ON r.route_id = fc.route_id\nORDER BY fc.price ASC\nLIMIT 5",
+          "refId": "A",
+          "sql": {"columns": [], "groupBy": [], "limit": 50}
+        }
+      ],
+      "title": "Топ-5 лучших предложений",
+      "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "flight_monitor_pg"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "Событий",
+            "axisPlacement": "auto",
+            "fillOpacity": 80,
+            "gradientMode": "none",
+            "hideFrom": {"legend": false, "tooltip": false, "viz": false},
+            "lineWidth": 1,
+            "scaleDistribution": {"type": "linear"},
+            "thresholdsStyle": {"mode": "off"}
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{"color": "green", "value": null}]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {"id": "byName", "options": "INSERT"},
+            "properties": [{"id": "color", "value": {"fixedColor": "green", "mode": "fixed"}}]
+          },
+          {
+            "matcher": {"id": "byName", "options": "UPDATE"},
+            "properties": [{"id": "color", "value": {"fixedColor": "blue", "mode": "fixed"}}]
+          },
+          {
+            "matcher": {"id": "byName", "options": "DELETE"},
+            "properties": [{"id": "color", "value": {"fixedColor": "red", "mode": "fixed"}}]
+          }
+        ]
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
+      "id": 2,
+      "options": {
+        "barRadius": 0.1,
+        "barWidth": 0.7,
+        "fullHighlight": false,
+        "groupWidth": 0.7,
+        "legend": {"calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true},
+        "orientation": "auto",
+        "showValue": "auto",
+        "stacking": "none",
+        "tooltip": {"mode": "multi", "sort": "none"},
+        "xTickLabelRotation": 0,
+        "xTickLabelSpacing": 0
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "flight_monitor_pg"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawSql": "SELECT\n  event_type,\n  COUNT(*) AS count\nFROM cdc_events\nWHERE occurred_at >= NOW() - INTERVAL '24 hours'\nGROUP BY event_type\nORDER BY event_type",
+          "refId": "A",
+          "sql": {"columns": [], "groupBy": [], "limit": 50}
+        }
+      ],
+      "title": "CDC события за последние 24 часа",
+      "type": "barchart"
+    },
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "flight_monitor_pg"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "Запросов",
+            "axisPlacement": "auto",
+            "fillOpacity": 80,
+            "gradientMode": "none",
+            "hideFrom": {"legend": false, "tooltip": false, "viz": false},
+            "lineWidth": 1,
+            "scaleDistribution": {"type": "linear"},
+            "thresholdsStyle": {"mode": "off"}
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{"color": "green", "value": null}]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
+      "id": 3,
+      "options": {
+        "barRadius": 0.1,
+        "barWidth": 0.7,
+        "fullHighlight": false,
+        "groupWidth": 0.7,
+        "legend": {"calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true},
+        "orientation": "auto",
+        "showValue": "auto",
+        "stacking": "none",
+        "tooltip": {"mode": "multi", "sort": "none"},
+        "xTickLabelRotation": 0,
+        "xTickLabelSpacing": 0
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "flight_monitor_pg"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawSql": "SELECT\n  source,\n  COUNT(*) AS requests\nFROM raw_snapshots\nGROUP BY source\nORDER BY source",
+          "refId": "A",
+          "sql": {"columns": [], "groupBy": [], "limit": 50}
+        }
+      ],
+      "title": "Запросы по источникам (всего)",
+      "type": "barchart"
+    }
+  ],
+  "refresh": "5m",
+  "schemaVersion": 38,
+  "tags": ["flight-monitor"],
+  "templating": {"list": []},
+  "time": {"from": "now-24h", "to": "now"},
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "Overview",
+  "uid": "overview-v1",
+  "version": 1
+}
