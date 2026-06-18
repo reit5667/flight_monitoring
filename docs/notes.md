@@ -13,6 +13,7 @@
 - [TASK-010 — Абстрактный базовый класс Connector](#task-010--абстрактный-базовый-класс-connector)
 - [TASK-011 — Raw Storage: save_raw и load_raw](#task-011--raw-storage-save_raw-и-load_raw)
 - [TASK-012 + TASK-013 — Aviasales: от Playwright к Travelpayouts API](#task-012--task-013--aviasales-от-playwright-к-travelpayouts-api)
+- [TASK-016 — Search Planner: оркестрация коннекторов](#task-016--search-planner-оркестрация-коннекторов)
 
 ---
 
@@ -511,3 +512,98 @@ Trip.com не возвращает timezone в datetime-строках. Для �
 ### Почему Agoda отдаёт datetime в ISO 8601, а Trip.com — в своём формате
 
 Это особенности конкретных API. Agoda ближе к REST-стандарту (ISO datetime). Trip.com — legacy формат с пробелом вместо `T`. Оба парсятся корректно через `fromisoformat` (Agoda) и `strptime` (Trip.com). Timezone в обоих случаях отсутствует — добавляем `timezone.utc`.
+
+---
+
+## TASK-016 — Search Planner: оркестрация коннекторов
+
+### Что делает `planner/search_planner.py`
+
+`run_search_for_route(route_id)` — асинхронная функция, которая:
+1. Читает маршрут из таблицы `routes` по `route_id`
+2. Читает только `enabled=true` маппинги из `source_route_mappings`
+3. Для каждого маппинга находит коннектор в реестре `_CONNECTOR_REGISTRY` и вызывает `connector.fetch(route, mapping)`
+4. Возвращает `dict[str, list[Flight]]` — ключи это имена источников
+
+### Почему raw storage вызывается внутри коннекторов, а не в планнере
+
+Каждый коннектор сам вызывает `save_raw()` в своём `_fetch()`. Это осознанное решение из TASK-012/014/015 — коннектор знает точный момент получения данных и структуру ответа. Планнер не должен знать о формате raw данных: его задача — оркестрировать, а не сохранять.
+
+### Реестр коннекторов `_CONNECTOR_REGISTRY`
+
+Словарь `{source_name: connector_instance}` создаётся на уровне модуля. Если в БД появится маппинг для источника не из реестра — функция пропустит его с `INFO` логом. Добавить новый источник = добавить класс коннектора и одну строку в реестр.
+
+### Почему не используется `asyncio.gather` для параллельных запросов
+
+Планнер запускает коннекторы последовательно (`for mapping in mappings`). Это сделано намеренно на первой итерации — параллельный scraping через Playwright создаёт несколько браузеров одновременно и перегружает систему. Параллелизм можно добавить позже через `asyncio.gather` или семафор.
+
+---
+
+## TASK-021 — Pipeline: полный цикл Search → CDC → Warehouse
+
+### Что делает `scheduler/pipeline.py`
+
+`run_pipeline_for_route(route_id)` — асинхронная функция. Полный цикл за один вызов:
+
+1. **Search Planner** → `{source: [Flight, ...]}` для всех активных источников
+2. Для каждого источника:
+   - Читает предыдущий снапшот из `flights_current` (`_load_current_flights`)
+   - `compare_snapshots(previous, current)` → список CDC событий
+   - Если события есть: `apply_cdc_to_current` + `append_history` + `save_cdc_events`
+3. Возвращает `PipelineResult` с агрегированной статистикой
+
+### PipelineResult
+
+Pydantic модель:
+```python
+class PipelineResult(BaseModel):
+    route_id: int
+    sources_processed: list[str]   # источники, успешно обработанные
+    events_count: dict[str, int]   # {"INSERT": N, "UPDATE": N, "DELETE": N}
+    duration_seconds: float
+    errors: list[str]              # ошибки по источникам (не падают весь pipeline)
+```
+
+### Почему warehouse вызывается только при наличии событий
+
+`apply_cdc_to_current`, `append_history`, `save_cdc_events` — все три функции уже проверяют `if not events: return`. Но мы делаем `if events:` в pipeline дополнительно, чтобы избежать открытия транзакции БД вхолостую при повторном запуске без изменений. Три open connection = лишний overhead.
+
+### Устойчивость к ошибкам
+
+Каждый источник обрабатывается в `try/except`. Ошибка в одном источнике (например, Trip.com недоступен) не прерывает обработку других. Ошибка записывается в `PipelineResult.errors` и логируется на уровне `exception` (с traceback). Это важно для мониторинга через Grafana и алертов.
+
+### Первый запуск (нет предыдущего снапшота)
+
+При пустой `flights_current` `_load_current_flights` вернёт `[]`. `compare_snapshots([], current)` создаст INSERT для каждого рейса. Это ожидаемое поведение — первый запуск заполняет таблицу.
+
+---
+
+## TASK-022 — Prefect Flow: оркестрация маршрутов по расписанию
+
+### Что делает `scheduler/flow.py`
+
+`@flow run_all_routes()` — верхний уровень оркестрации:
+1. `_load_enabled_routes()` — читает все `enabled=true` маршруты из БД, сортированные по `priority DESC`
+2. Для каждого маршрута вызывает `@task pipeline_task(route_id)` последовательно
+
+`@task pipeline_task(route_id)` — тонкая обёртка над `run_pipeline_for_route`, добавляет:
+- retries=1, retry_delay_seconds=30 (автоматический retry при сбое)
+- Логирование через стандартный logger
+
+### Почему `logging.getLogger` вместо `get_run_logger()`
+
+`get_run_logger()` требует активный Prefect контекст (FlowRunContext/TaskRunContext). При вызове `.fn()` в юнит-тестах контекста нет → `MissingContextError`. Переключение на стандартный `logging.getLogger(__name__)` позволяет:
+- Тестировать функции через `.fn()` без Prefect сервера
+- Логи всё равно видны в терминале (и в Prefect UI через `log_prints=True` на flow)
+
+### Тестирование через `.fn()`
+
+В Prefect 3, `@flow` и `@task` объекты имеют атрибут `.fn` — это исходная Python функция без Prefect-инструментации. `prefect_test_harness` из Prefect 2 несовместим с Prefect 3.7.
+
+### `scheduler/deploy.py`
+
+Скрипт деплоя: читает `POLL_INTERVAL_MINUTES` (default 60) и строит cron-выражение `*/N * * * *`. Деплоит flow на пул `default-agent-pool`, который уже настроен в docker-compose. Запускается один раз с хоста:
+
+```bash
+PREFECT_API_URL=http://localhost:4200/api python scheduler/deploy.py
+```

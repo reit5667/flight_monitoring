@@ -31,7 +31,7 @@ Flight Price Intelligence Platform — система мониторинга ц�
 | JSON | orjson |
 | Валидация | Pydantic v2 |
 | БД | PostgreSQL 16 |
-| Оркестрация | Prefect 2 |
+| Оркестрация | Prefect 2 (docker) / Prefect 3.7 (venv локально) |
 | Контейнеризация | Docker Compose |
 | Мониторинг | Prometheus + Grafana |
 | Уведомления | python-telegram-bot |
@@ -64,7 +64,9 @@ Prefect Scheduler
 | `parser/` | Один файл на источник, raw JSON → list[Flight] |
 | `cdc/engine.py` | Чистая функция: compare_snapshots → list[CdcEvent] |
 | `warehouse/` | Запись в БД (current, history, events) |
-| `scheduler/` | Prefect flows |
+| `planner/search_planner.py` | Оркестрация коннекторов для маршрута → dict[source, list[Flight]] |
+| `scheduler/pipeline.py` | Полный цикл для маршрута: Search → CDC → Warehouse → PipelineResult |
+| `scheduler/flow.py` | Prefect @flow + @task; деплой через scheduler/deploy.py |
 
 ## Важные решения
 
@@ -78,3 +80,6 @@ Prefect Scheduler
 - **source_route_mappings** — каждый источник может использовать свои коды аэропортов
 - **SCD Type 2 в flights_history** — история никогда не удаляется, только добавляется
 - **Prefect worker** — монтирует код проекта через volume + pip install в entrypoint; PostgreSQL как backend сервера (не SQLite)
+- **Prefect версии расходятся** — venv локально имеет Prefect 3.7, docker image — Prefect 2. `prefect_test_harness` не работает в v3; тесты flow вызываются через `.fn()`. `get_run_logger()` требует Prefect контекст — в flow.py используется стандартный `logging.getLogger`
+- **Search Planner** — коннекторы запускаются последовательно (не параллельно): Playwright создаёт тяжёлые браузерные процессы, параллельный запуск перегружает систему
+- **Pipeline устойчив к ошибкам** — ошибка в одном источнике не прерывает другие; фиксируется в `PipelineResult.errors`

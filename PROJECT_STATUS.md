@@ -14,7 +14,7 @@
 
 **Активная задача:** нет
 
-**Следующая задача:** TASK-016 — Search Planner (critical)
+**Следующая задача:** TASK-023 — Telegram Bot (high)
 
 **Блокеры:** нет
 
@@ -27,7 +27,7 @@
 | Phase 1 | Infrastructure (Docker, PostgreSQL, Prefect, Grafana) | done (TASK-006 выполнен, Grafana — позже) |
 | Phase 2 | Aviasales connector + Raw Storage | done (TASK-008..013) |
 | Phase 3 | CDC Engine + Warehouse | done (TASK-017..020) |
-| Phase 4 | Trip.com + Agoda connectors + Orchestration | not started |
+| Phase 4 | Trip.com + Agoda connectors + Orchestration | done |
 | Phase 5 | Notifications + Analytics | not started |
 
 ---
@@ -36,11 +36,11 @@
 
 | Приоритет | Всего | Done |
 |---|---|---|
-| critical | 14 | 12 |
-| high | 10 | 4 |
+| critical | 14 | 14 |
+| high | 10 | 5 |
 | medium | 4 | 0 |
 | low | 1 | 0 |
-| **Итого** | **29** | **18** |
+| **Итого** | **29** | **21** |
 
 ---
 
@@ -69,6 +69,9 @@
 | 2026-06-18 | TASK-006 | prefect-server + prefect-worker добавлены в docker-compose.yml; UI на :4200 доступен; worker подключён, work pool создан |
 | 2026-06-18 | TASK-014 | connectors/trip.py (Playwright XHR-перехват /flights/api/); parser/trip.py (data.flightItineraryList); 12 unit тестов парсера, 25/25 общий |
 | 2026-06-18 | TASK-015 | connectors/agoda.py (Playwright XHR /api/cronos/flight/); parser/agoda.py (data.flights + legs); 12 unit тестов, 37/37 общий |
+| 2026-06-18 | TASK-016 | planner/search_planner.py создан; run_search_for_route читает маршрут+маппинги из БД, запускает коннекторы; 6/6 unit тестов |
+| 2026-06-18 | TASK-021 | scheduler/pipeline.py создан; run_pipeline_for_route — полный цикл: Search→CDC→Warehouse; PipelineResult с events_count и errors; 6/6 unit тестов |
+| 2026-06-18 | TASK-022 | scheduler/flow.py (Prefect @flow + @task); scheduler/deploy.py (деплой с cron по POLL_INTERVAL_MINUTES); 5/5 unit тестов; .fn() вместо test harness (несовместим с Prefect 3) |
 
 ---
 
