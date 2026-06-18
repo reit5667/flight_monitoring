@@ -70,8 +70,11 @@ Prefect Scheduler
 
 - **Connectors не парсят HTML** — только перехватывают XHR запросы через Playwright
 - **Aviasales — исключение**: использует AWS WAF + WebSocket/Centrifuge, Playwright блокируется. Вместо скрапинга — **Travelpayouts API** (httpx). Токен: `TRAVELPAYOUTS_TOKEN` в `.env`. Подробнее: `docs/notes.md` секция TASK-012/013.
-- **Trip.com и Agoda** — Playwright XHR-перехват (нет official API, нет WAF уровня Aviasales)
+- **Trip.com XHR-паттерн**: `/flights/api/` → `data.flightItineraryList`
+- **Agoda XHR-паттерн**: `/api/cronos/flight/` → `data.flights`
 - **CDC — pure function** — engine.py не обращается к БД, только сравнивает списки
+- **Warehouse — три функции**: `apply_cdc_to_current` (flights_current), `append_history` (SCD Type 2), `save_cdc_events` (batch insert)
 - **Raw Storage всегда сохраняется** — можно перепарсить без повторного запроса
 - **source_route_mappings** — каждый источник может использовать свои коды аэропортов
 - **SCD Type 2 в flights_history** — история никогда не удаляется, только добавляется
+- **Prefect worker** — монтирует код проекта через volume + pip install в entrypoint; PostgreSQL как backend сервера (не SQLite)

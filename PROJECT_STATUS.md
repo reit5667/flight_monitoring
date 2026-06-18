@@ -14,7 +14,7 @@
 
 **Активная задача:** нет
 
-**Следующая задача:** TASK-019 — Warehouse History (critical)
+**Следующая задача:** TASK-016 — Search Planner (critical)
 
 **Блокеры:** нет
 
@@ -24,9 +24,9 @@
 
 | Фаза | Описание | Статус |
 |---|---|---|
-| Phase 1 | Infrastructure (Docker, PostgreSQL, Prefect, Grafana) | partial (Prefect — TASK-006 pending) |
+| Phase 1 | Infrastructure (Docker, PostgreSQL, Prefect, Grafana) | done (TASK-006 выполнен, Grafana — позже) |
 | Phase 2 | Aviasales connector + Raw Storage | done (TASK-008..013) |
-| Phase 3 | CDC Engine | done (TASK-017) |
+| Phase 3 | CDC Engine + Warehouse | done (TASK-017..020) |
 | Phase 4 | Trip.com + Agoda connectors + Orchestration | not started |
 | Phase 5 | Notifications + Analytics | not started |
 
@@ -36,11 +36,11 @@
 
 | Приоритет | Всего | Done |
 |---|---|---|
-| critical | 14 | 10 |
-| high | 10 | 1 |
+| critical | 14 | 12 |
+| high | 10 | 4 |
 | medium | 4 | 0 |
 | low | 1 | 0 |
-| **Итого** | **29** | **13** |
+| **Итого** | **29** | **18** |
 
 ---
 
@@ -64,6 +64,11 @@
 | 2026-06-18 | TASK-013 | parser/aviasales.py создан; parse_aviasales → list[Flight]; 13 тестов; arrival_time = departure + duration |
 | 2026-06-18 | TASK-017 | cdc/engine.py создан; compare_snapshots — pure function; ключ (provider, flight_number, departure_time, route_id); 17/17 тестов passed |
 | 2026-06-18 | TASK-018 | warehouse/current.py создан; apply_cdc_to_current — INSERT/UPDATE/DELETE + upsert; транзакция; rollback при ошибке; 10/10 тестов passed |
+| 2026-06-18 | TASK-019 | warehouse/history.py создан; append_history — SCD Type 2; INSERT добавляет, UPDATE закрывает+добавляет, DELETE закрывает; 8/8 тестов passed |
+| 2026-06-18 | TASK-020 | warehouse/events.py создан; save_cdc_events — batch insert через execute_values; changed_fields как JSONB через orjson; 6/6 тестов passed |
+| 2026-06-18 | TASK-006 | prefect-server + prefect-worker добавлены в docker-compose.yml; UI на :4200 доступен; worker подключён, work pool создан |
+| 2026-06-18 | TASK-014 | connectors/trip.py (Playwright XHR-перехват /flights/api/); parser/trip.py (data.flightItineraryList); 12 unit тестов парсера, 25/25 общий |
+| 2026-06-18 | TASK-015 | connectors/agoda.py (Playwright XHR /api/cronos/flight/); parser/agoda.py (data.flights + legs); 12 unit тестов, 37/37 общий |
 
 ---
 

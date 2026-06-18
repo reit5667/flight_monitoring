@@ -358,3 +358,156 @@ UNIQUE-ограничение на `(provider, flight_number, departure_time, ro
 ### Phase 3 завершена
 
 CDC Engine (TASK-017) + Warehouse Current (TASK-018) — ключевая связка: теперь система умеет сравнивать снапшоты и обновлять актуальное состояние в БД.
+
+---
+
+## TASK-019 — Warehouse History: SCD Type 2
+
+### Почему переиспользуем _get_conn, _parse_key, _index, _params из warehouse/current.py
+
+Это одна доменная зона (warehouse) и один DB-драйвер (psycopg2). Дублировать одни и те же утилиты было бы хуже — любое изменение схемы коннекта или формата flight_key пришлось бы менять в двух местах.
+
+### SCD Type 2: как работает UPDATE
+
+"Close + Insert" в одной транзакции:
+1. `UPDATE flights_history SET valid_to=now, is_current=false WHERE ... AND is_current=true` — закрываем текущую запись
+2. `INSERT INTO flights_history (..., valid_from=now, valid_to=NULL, is_current=true)` — пишем новую
+
+Если шаг 1 не нашёл строку (например, история ещё не была создана) — ничего не упадёт, просто UPDATE не затронет строк. Это допустимо.
+
+### Инвариант: flights_history WHERE is_current=true == flights_current
+
+Тест `test_is_current_history_matches_current_table` проверяет этот инвариант после сложного сценария (INSERT + UPDATE + DELETE). Это самый важный тест в наборе — он доказывает, что `current` и `history` не расходятся.
+
+---
+
+## Архитектурная заметка: хранение данных и retention
+
+### Что сейчас в DWH
+
+`flights_current`, `flights_history`, `cdc_events` — пустые до тех пор, пока не запустится полный пайплайн (Prefect flow, TASK-006 + TASK-021). `raw_snapshots` заполняется только интеграционными тестами.
+
+### Retention по слоям
+
+| Слой | Режим роста | Рекомендуемый retention |
+|---|---|---|
+| `flights_current` | Постоянный размер (только UPDATE) | Чистка не нужна |
+| `flights_history` | +1 строка на каждое изменение цены | 1–2 года |
+| `cdc_events` | +1 событие на каждое изменение | 90–180 дней |
+| raw файлы + `raw_snapshots` | +1 файл на каждый API-запрос | 7–14 дней |
+
+Raw файлы нужны только для перепарсинга (если был баг в парсере). Через 2 недели — смело удалять. `flights_history` — самое ценное, хранить долго.
+
+### Горизонт планирования
+
+Travelpayouts API отдаёт рейсы **до 12 месяцев вперёд**. Для сезонных поисков (лето, НГ) можно начинать мониторинг за 3–6 месяцев.
+
+### Запрос самого дешёвого билета по маршруту и датам
+
+```sql
+SELECT flight_number, airline, price, departure_time
+FROM flights_current
+WHERE route_id IN (
+    SELECT route_id FROM routes
+    WHERE origin = 'SVO' AND destination IN ('HAN', 'SGN')
+)
+  AND departure_time BETWEEN '2026-08-03' AND '2026-08-17'
+ORDER BY price ASC
+LIMIT 10;
+```
+
+Чтобы это заработало: нужно добавить маршруты SVO→HAN, SVO→SGN в `routes` (сейчас засеяны только тестовые HAN→KUL, KUL→CMB, CMB→MOW) и запустить пайплайн.
+
+### Чистка — отдельный Prefect flow
+
+Retention не реализован в текущих задачах. Логичное место — отдельный cron flow (раз в сутки): удаляет raw файлы старше 14 дней, архивирует/удаляет cdc_events старше 180 дней.
+
+---
+
+## TASK-020 — Warehouse Events: save_cdc_events
+
+### Batch insert через execute_values, а не N отдельных INSERT
+
+`psycopg2.extras.execute_values` отправляет все строки одним SQL-запросом: `INSERT INTO ... VALUES (%s,...),(%s,...),(%s,...)`. При 100 событиях это в ~100 раз меньше round-trip'ов к БД и значительно быстрее.
+
+### JSONB-сериализация: почему orjson, а не стандартный json
+
+`changed_fields` может содержать `Decimal` (цена) и `datetime` (arrival_time). Стандартный `json.dumps` бросает `TypeError` на этих типах. `orjson` обрабатывает их нативно; через `default` callback дополнительно покрываем edge cases. Результат декодируем в `str` — psycopg2 с `::jsonb` кастом принимает его и сохраняет как валидный JSONB.
+
+### Что psycopg2 делает с JSONB при чтении
+
+При SELECT psycopg2 автоматически десериализует JSONB обратно в Python dict — никакого `json.loads` вручную не нужно. Тест `test_changed_fields_stored_as_jsonb` проверяет именно это поведение.
+
+---
+
+## TASK-006 — Prefect в Docker Compose
+
+### Почему worker монтирует весь проект и делает pip install при старте
+
+Worker в Prefect 2 запускает flow-код в subprocess на своей же машине (Process work pool). Значит ему нужны все наши Python-пакеты. Два варианта: билдить кастомный Docker image или монтировать директорию + pip install в entrypoint. Второй вариант проще для dev: не нужен Dockerfile, изменения в коде подхватываются без пересборки образа.
+
+### Почему prefect-server использует PostgreSQL как backend, а не SQLite
+
+SQLite (дефолт Prefect) — файловая БД, не подходит для Docker: при рестарте контейнера без volume данные теряются. PostgreSQL у нас уже есть, поэтому используем его. Переменная: `PREFECT_API_DATABASE_CONNECTION_URL=postgresql+asyncpg://...`. Нужен именно `asyncpg` драйвер — Prefect server async.
+
+### Work pool "default-agent-pool" создаётся автоматически
+
+При первом запуске `prefect worker start --pool default-agent-pool` Prefect сам создаёт work pool, если его нет. Не нужно делать `prefect work-pool create` отдельно.
+
+---
+
+## TASK-014 — Trip.com коннектор + парсер
+
+### Архитектура XHR-перехвата: page.on("response", handler)
+
+Playwright позволяет подписаться на все HTTP-ответы страницы. Мы фильтруем по двум критериям:
+1. URL содержит `/flights/api/` — это специфичный паттерн Trip.com API, отличающий данные о рейсах от статики, аналитики и т.д.
+2. Content-Type содержит `json` — убеждаемся что ответ парсируемый
+
+Первый ответ с `data.flightItineraryList` сохраняется и браузер закрывается. `wait_until="networkidle"` — оптимистичное ожидание, timeout ожидается и обрабатывается через `except`.
+
+### Почему Trip.com не блокирует, а Aviasales блокировал
+
+Aviasales использует AWS WAF + WebSocket (Centrifuge) для доставки данных. Trip.com и Agoda отдают данные через обычные XHR-запросы без агрессивной bot-защиты на уровне JS. Playwright в headless режиме для них достаточен.
+
+### Формат Trip.com XHR-ответа (зафиксированный контракт)
+
+```
+data.flightItineraryList[i]:
+  priceList[0].adultPrice  → Decimal price
+  priceList[0].currency    → "USD"
+  flightSegments[0]:
+    departureAirportInfo.airportCode → origin IATA
+    arrivalAirportInfo.airportCode   → destination IATA
+    departureDateTime / arrivalDateTime → "YYYY-MM-DD HH:MM:SS" (UTC-как-есть)
+    airlineInfo.airlineName / airlineCode → airline
+    flightNumber → str | None
+    duration     → минуты
+    stopCount    → int
+```
+
+Если реальный формат Trip.com изменится — нужно обновить парсер и тесты.
+
+### Datetime без timezone: трактуем как UTC
+
+Trip.com не возвращает timezone в datetime-строках. Для консистентности добавляем `timezone.utc`. Это упрощение — в реальности Trip.com может отдавать local time аэропорта. Для задачи мониторинга цен (а не точного расписания) это приемлемо.
+
+---
+
+## TASK-015 — Agoda коннектор + парсер
+
+### Отличия от Trip.com
+
+| | Trip.com | Agoda |
+|---|---|---|
+| XHR path | `/flights/api/` | `/api/cronos/flight/` |
+| Структура ответа | `data.flightItineraryList[].flightSegments[]` | `data.flights[].legs[]` |
+| Datetime формат | `"YYYY-MM-DD HH:MM:SS"` (strptime) | ISO 8601 `"YYYY-MM-DDTHH:MM:SS"` (fromisoformat) |
+| Цена | `priceList[0].adultPrice` | `fareAmount` (верхний уровень) |
+| Авиакомпания | `airlineInfo.airlineName/airlineCode` | `carrier.name/code` |
+
+Везде один и тот же принцип: берём name, если нет — fallback на code.
+
+### Почему Agoda отдаёт datetime в ISO 8601, а Trip.com — в своём формате
+
+Это особенности конкретных API. Agoda ближе к REST-стандарту (ISO datetime). Trip.com — legacy формат с пробелом вместо `T`. Оба парсятся корректно через `fromisoformat` (Agoda) и `strptime` (Trip.com). Timezone в обоих случаях отсутствует — добавляем `timezone.utc`.
