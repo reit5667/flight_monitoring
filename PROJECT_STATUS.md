@@ -14,7 +14,7 @@
 
 **Активная задача:** нет
 
-**Следующая задача:** TASK-023 — Telegram Bot (high)
+**Следующая задача:** TASK-007 — Grafana + Prometheus в Docker Compose (medium)
 
 **Блокеры:** нет
 
@@ -40,7 +40,7 @@
 | high | 10 | 5 |
 | medium | 4 | 0 |
 | low | 1 | 0 |
-| **Итого** | **29** | **21** |
+| **Итого** | **29** | **24** |
 
 ---
 
@@ -72,6 +72,9 @@
 | 2026-06-18 | TASK-016 | planner/search_planner.py создан; run_search_for_route читает маршрут+маппинги из БД, запускает коннекторы; 6/6 unit тестов |
 | 2026-06-18 | TASK-021 | scheduler/pipeline.py создан; run_pipeline_for_route — полный цикл: Search→CDC→Warehouse; PipelineResult с events_count и errors; 6/6 unit тестов |
 | 2026-06-18 | TASK-022 | scheduler/flow.py (Prefect @flow + @task); scheduler/deploy.py (деплой с cron по POLL_INTERVAL_MINUTES); 5/5 unit тестов; .fn() вместо test harness (несовместим с Prefect 3) |
+| 2026-06-18 | TASK-023 | notifications/telegram.py; async send_notification → bool; ParseMode.HTML (не MarkdownV2 — экранирование мешало бы ценам); 5/5 тестов; .env.example: PRICE_DROP_THRESHOLD_PCT=15 |
+| 2026-06-18 | TASK-024 | notifications/rules.py; NotificationTrigger (Pydantic); 2 правила: HISTORICAL_MIN (приоритет) + SIGNIFICANT_DROP (rolling avg 30 дней, 15%); вызывать ДО warehouse write; 8 тестов → 13/13 total |
+| 2026-06-18 | TASK-025 | notifications/dedup.py; in-memory dict (worker живёт постоянно → state сохраняется); DEDUP_WINDOW_HOURS читается в runtime (monkeypatch); backdating cache в тестах вместо freezegun; 5 тестов → 18/18 total |
 
 ---
 
