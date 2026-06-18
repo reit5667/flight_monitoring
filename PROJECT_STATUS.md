@@ -80,6 +80,7 @@
 | 2026-06-18 | TASK-027 | provider.yaml + price_history.json; 3 панели: timeseries (история цен), stat (min всё время), stat (avg 7 дней); dropdown маршрутов из routes; дашборд "Price History" загружен в Grafana |
 | 2026-06-18 | TASK-028 | overview.json; 3 панели: table (топ-5 из flights_current), barchart (CDC события 24ч по типам), barchart (запросы по источникам из raw_snapshots); дашборд "Overview" загружен в Grafana |
 | 2026-06-18 | TASK-029 | metrics/prometheus.py: 4 метрики (counter ×2, histogram, gauge); start_metrics_server() в flow.py; метрики интегрированы в pipeline.py; Prometheus scrape подтверждён через API |
+| 2026-06-18 | fixes | Aviasales: формат даты %Y-%m вместо %Y-%m-%d; Grafana price_history: source→provider в flights_history; первый реальный прогон pipeline: 10 рейсов HAN→KUL, от $92 (AirAsia) |
 
 ---
 

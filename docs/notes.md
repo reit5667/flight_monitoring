@@ -14,6 +14,14 @@
 - [TASK-011 — Raw Storage: save_raw и load_raw](#task-011--raw-storage-save_raw-и-load_raw)
 - [TASK-012 + TASK-013 — Aviasales: от Playwright к Travelpayouts API](#task-012--task-013--aviasales-от-playwright-к-travelpayouts-api)
 - [TASK-016 — Search Planner: оркестрация коннекторов](#task-016--search-planner-оркестрация-коннекторов)
+- [TASK-007 — Grafana и Prometheus в Docker Compose](#task-007--grafana-и-prometheus-в-docker-compose)
+- [TASK-026 — Grafana PostgreSQL datasource через provisioning](#task-026--grafana-postgresql-datasource-через-provisioning)
+- [TASK-027 — Grafana дашборд: история цен](#task-027--grafana-дашборд-история-цен)
+- [TASK-028 + TASK-029 — Grafana Overview и Prometheus метрики](#task-028--task-029--grafana-overview-и-prometheus-метрики)
+- [Travelpayouts API: формат даты в запросе](#travelpayouts-api-формат-даты-в-запросе)
+- [Grafana: source vs provider в flights_history](#grafana-source-vs-provider-в-flights_history)
+- [Безопасность: .env vs .env.example](#безопасность-env-vs-envexample)
+- [Как запустить и потрогать проект руками](#как-запустить-и-потрогать-проект-руками)
 
 ---
 
@@ -755,6 +763,32 @@ def reset_dedup_cache():
 ```bash
 PREFECT_API_URL=http://localhost:4200/api python scheduler/deploy.py
 ```
+
+---
+
+## Grafana: `source` vs `provider` в flights_history
+
+При написании SQL для time series панели использовалось `source AS metric` — но в таблице `flights_history` нет колонки `source`. Колонка называется `provider` (это имя коннектора: aviasales, trip, agoda).
+
+Ошибка проявилась как `Status 500: column "source" does not exist` в Grafana Inspect. Фикс: `provider AS metric` в `price_history.json`.
+
+**Почему `provider`, а не `source`:** В модели `Flight` поле называется `provider` (кто предоставил данные). В `flights_current` и `flights_history` оно хранится как `provider`. Слово `source` используется в контексте коннектора (`source_name`), маппингов (`source_route_mappings`) и raw storage — но не в самих таблицах рейсов.
+
+---
+
+## Безопасность: .env vs .env.example
+
+`.env.example` — публичный шаблон, коммитится в git. Реальные значения только в `.env` (в `.gitignore`).
+
+В этой сессии токен Travelpayouts случайно попал в `.env.example`. Был сразу заменён на `your_token_here`. Правило: в `.env.example` всегда `your_X_here` или `changeme`, никогда реальные значения.
+
+---
+
+## Travelpayouts API: формат даты в запросе
+
+`prices_for_dates` — это кэш дешёвых цен, а не live-поиск. Конкретная дата (`2026-07-01`) возвращает пустой ответ если в кэше нет данных именно на этот день. Формат месяца (`2026-07`) возвращает топ-N дешёвых вариантов за весь месяц — это то что нам нужно.
+
+Фикс в `connectors/aviasales.py`: `search_date.strftime("%Y-%m")` вместо `"%Y-%m-%d"`.
 
 ---
 

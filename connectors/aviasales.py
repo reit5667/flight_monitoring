@@ -39,7 +39,7 @@ class AviasalesConnector(BaseConnector):
         params = {
             "origin": mapping.source_origin,
             "destination": mapping.source_destination,
-            "departure_at": search_date.strftime("%Y-%m-%d"),
+            "departure_at": search_date.strftime("%Y-%m"),
             "currency": route.currency.lower(),
             "sorting": "price",
             "direct": "false",

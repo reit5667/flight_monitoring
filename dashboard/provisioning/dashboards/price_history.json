@@ -64,7 +64,7 @@
           },
           "editorMode": "code",
           "format": "time_series",
-          "rawSql": "SELECT\n  valid_from AS \"time\",\n  price::float AS \"Цена\",\n  source AS metric\nFROM flights_history\nWHERE\n  route_id = $route_id\n  AND $__timeFilter(valid_from)\nORDER BY valid_from",
+          "rawSql": "SELECT\n  valid_from AS \"time\",\n  price::float AS \"Цена\",\n  provider AS metric\nFROM flights_history\nWHERE\n  route_id = $route_id\n  AND $__timeFilter(valid_from)\nORDER BY valid_from",
           "refId": "A",
           "sql": {"columns": [], "groupBy": [], "limit": 50}
         }

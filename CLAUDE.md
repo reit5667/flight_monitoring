@@ -56,7 +56,7 @@ Prefect Scheduler
 
 | Файл | Назначение |
 |---|---|
-| `tasks.json` | 29 задач с acceptance criteria и test_steps |
+| `tasks.json` | 30 задач с acceptance criteria и test_steps |
 | `PROJECT_STATUS.md` | Текущий трек, история сессий |
 | `migrations/` | SQL миграции (применяются через docker compose) |
 | `models/` | Pydantic модели (Flight, Route, CdcEvent и др.) |
@@ -72,6 +72,8 @@ Prefect Scheduler
 
 - **Connectors не парсят HTML** — только перехватывают XHR запросы через Playwright
 - **Aviasales — исключение**: использует AWS WAF + WebSocket/Centrifuge, Playwright блокируется. Вместо скрапинга — **Travelpayouts API** (httpx). Токен: `TRAVELPAYOUTS_TOKEN` в `.env`. Подробнее: `docs/notes.md` секция TASK-012/013.
+- **Travelpayouts API: формат даты** — `departure_at` передаётся как `%Y-%m` (месяц), не `%Y-%m-%d`. Конкретная дата возвращает пустой ответ если нет кэша; месяц возвращает топ дешёвых вариантов за весь месяц.
+- **`flights_history.provider`** — колонка называется `provider` (не `source`). `source` используется в маппингах и raw storage, но не в таблицах рейсов.
 - **Trip.com XHR-паттерн**: `/flights/api/` → `data.flightItineraryList`
 - **Agoda XHR-паттерн**: `/api/cronos/flight/` → `data.flights`
 - **CDC — pure function** — engine.py не обращается к БД, только сравнивает списки
