@@ -19,6 +19,7 @@ Flight Price Intelligence Platform — система мониторинга ц�
 2. Обнови `PROJECT_STATUS.md` — активная задача, статистика, запись в истории
 3. Обнови `CLAUDE.md` если что-то изменилось в архитектуре или подходе
 4. Обнови memory-файл проекта (`~/.claude/projects/.../memory/project_flight_monitor.md`)
+5. Обнови `docs/notes.md` — по каждой выполненной задаче: нетривиальные решения, проблемы и почему выбрали именно этот подход
 
 ## Стек
 
@@ -68,6 +69,8 @@ Prefect Scheduler
 ## Важные решения
 
 - **Connectors не парсят HTML** — только перехватывают XHR запросы через Playwright
+- **Aviasales — исключение**: использует AWS WAF + WebSocket/Centrifuge, Playwright блокируется. Вместо скрапинга — **Travelpayouts API** (httpx). Токен: `TRAVELPAYOUTS_TOKEN` в `.env`. Подробнее: `docs/notes.md` секция TASK-012/013.
+- **Trip.com и Agoda** — Playwright XHR-перехват (нет official API, нет WAF уровня Aviasales)
 - **CDC — pure function** — engine.py не обращается к БД, только сравнивает списки
 - **Raw Storage всегда сохраняется** — можно перепарсить без повторного запроса
 - **source_route_mappings** — каждый источник может использовать свои коды аэропортов

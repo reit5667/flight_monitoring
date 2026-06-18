@@ -45,3 +45,6 @@ include = [
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+markers = [
+    "slow: live integration tests that hit real external services (network required)",
+]

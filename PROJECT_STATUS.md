@@ -14,7 +14,7 @@
 
 **Активная задача:** нет
 
-**Следующая задача:** TASK-011 (проверить зависимости)
+**Следующая задача:** TASK-019 — Warehouse History (critical)
 
 **Блокеры:** нет
 
@@ -24,9 +24,9 @@
 
 | Фаза | Описание | Статус |
 |---|---|---|
-| Phase 1 | Infrastructure (Docker, PostgreSQL, Prefect, Grafana) | not started |
-| Phase 2 | Aviasales connector + Raw Storage | not started |
-| Phase 3 | CDC Engine | not started |
+| Phase 1 | Infrastructure (Docker, PostgreSQL, Prefect, Grafana) | partial (Prefect — TASK-006 pending) |
+| Phase 2 | Aviasales connector + Raw Storage | done (TASK-008..013) |
+| Phase 3 | CDC Engine | done (TASK-017) |
 | Phase 4 | Trip.com + Agoda connectors + Orchestration | not started |
 | Phase 5 | Notifications + Analytics | not started |
 
@@ -36,11 +36,11 @@
 
 | Приоритет | Всего | Done |
 |---|---|---|
-| critical | 14 | 7 |
+| critical | 14 | 10 |
 | high | 10 | 1 |
 | medium | 4 | 0 |
 | low | 1 | 0 |
-| **Итого** | **29** | **8** |
+| **Итого** | **29** | **13** |
 
 ---
 
@@ -59,6 +59,11 @@
 | 2026-06-18 | TASK-008 | models/flight.py + models/route.py созданы; 11/11 тестов passed; venv настроен |
 | 2026-06-18 | TASK-009 | models/cdc.py + models/storage.py созданы; 19/19 тестов passed |
 | 2026-06-18 | TASK-010 | connectors/base.py создан (Template Method, async); 23/23 тестов passed |
+| 2026-06-18 | TASK-011 | storage/raw.py создан (save_raw + load_raw); models/storage.py: добавлен id; 7/7 тестов passed |
+| 2026-06-18 | TASK-012 | connectors/aviasales.py создан; переключён на Travelpayouts API (WAF блокировал Playwright); 6 unit тестов |
+| 2026-06-18 | TASK-013 | parser/aviasales.py создан; parse_aviasales → list[Flight]; 13 тестов; arrival_time = departure + duration |
+| 2026-06-18 | TASK-017 | cdc/engine.py создан; compare_snapshots — pure function; ключ (provider, flight_number, departure_time, route_id); 17/17 тестов passed |
+| 2026-06-18 | TASK-018 | warehouse/current.py создан; apply_cdc_to_current — INSERT/UPDATE/DELETE + upsert; транзакция; rollback при ошибке; 10/10 тестов passed |
 
 ---
 

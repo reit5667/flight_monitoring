@@ -1,7 +1,66 @@
 # Dev Notes — объяснения по ходу разработки
 
-Этот файл — инбокс с объяснениями нетривиальных решений.
+Этот файл — объяснения нетривиальных решений: почему так, а не иначе.
 Читай после каждой сессии чтобы понять что было сделано и почему.
+
+## Содержание
+
+- [Как работают тесты](#как-работают-тесты-в-этом-проекте)
+- [TASK-004 — SQL миграции: warehouse таблицы](#task-004--sql-миграции-warehouse-таблицы)
+- [TASK-005 — Seed MVP маршрутов](#task-005--seed-mvp-маршрутов)
+- [TASK-008 — Pydantic модели: Flight, Route, SourceMapping](#task-008--pydantic-модели-flight-route-sourcemapping)
+- [TASK-009 — Pydantic модели: CdcEvent, RawSnapshot](#task-009--pydantic-модели-cdcevent-rawsnapshot)
+- [TASK-010 — Абстрактный базовый класс Connector](#task-010--абстрактный-базовый-класс-connector)
+- [TASK-011 — Raw Storage: save_raw и load_raw](#task-011--raw-storage-save_raw-и-load_raw)
+- [TASK-012 + TASK-013 — Aviasales: от Playwright к Travelpayouts API](#task-012--task-013--aviasales-от-playwright-к-travelpayouts-api)
+
+---
+
+## Как работают тесты в этом проекте
+
+### Что такое тест
+
+Тест — это функция которая вызывает твой код и проверяет что результат совпадает с ожидаемым. Если не совпадает — тест "падает" (FAILED) и показывает где именно расхождение.
+
+```python
+def test_save_raw_returns_snapshot_with_id():
+    snapshot = save_raw({"test": 1}, "aviasales", 1)  # вызываем наш код
+    assert snapshot.id is not None and snapshot.id > 0  # проверяем результат
+```
+
+`assert` — ключевое слово Python. Если выражение справа истинно — тест продолжается. Если ложно — pytest остановит выполнение и покажет ошибку с подробностями.
+
+### Как запускать
+
+```bash
+# все тесты
+.venv/bin/python -m pytest
+
+# тесты конкретного файла
+.venv/bin/python -m pytest tests/test_storage_raw.py
+
+# с подробным выводом (имена каждого теста)
+.venv/bin/python -m pytest -v
+```
+
+Вывод `7 passed` — все 7 тестов прошли. `FAILED` — хотя бы один упал.
+
+### Два типа тестов в проекте
+
+**Unit тесты** (`test_models.py`) — тестируют изолированную логику без внешних зависимостей. Pydantic-валидация не нужна БД, поэтому они запускаются мгновенно и всегда.
+
+**Integration тесты** (`test_storage_raw.py`, `test_connector_base.py`) — тестируют реальное взаимодействие с PostgreSQL. Требуют запущенного Docker:
+```bash
+docker compose up -d    # поднять контейнеры перед запуском
+```
+
+### Почему тесты важны
+
+Когда мы меняем один модуль — тесты показывают, не сломали ли мы другой. Например, после добавления поля `id` в `RawSnapshot` мы сразу видели: старые тесты (`test_models.py`) по-прежнему зелёные — поле опциональное, ничего не сломалось.
+
+### Фикстура `monkeypatch` в тестах storage
+
+В `test_storage_raw.py` используется `monkeypatch.setattr(raw_module, "RAW_STORAGE_DIR", tmp_path)` — это временная подмена пути к директории. Файлы пишутся во временную папку pytest, а не в `raw_storage/` репозитория. После теста pytest сам удаляет временные файлы. Сама БД при этом используется настоящая — поэтому тесты действительно проверяют работу с ней.
 
 ---
 
@@ -18,16 +77,12 @@
 | `cdc_events` | Журнал изменений: что именно изменилось, когда, на сколько. |
 | `raw_snapshots` | Метаданные о скачанных файлах: путь, источник, количество записей. |
 
----
-
 ### BIGSERIAL vs SERIAL
 
-`SERIAL` — 4 байта, максимум ~2 миллиарда значений.  
+`SERIAL` — 4 байта, максимум ~2 миллиарда значений.
 `BIGSERIAL` — 8 байт, максимум ~9 квинтиллионов.
 
 Для `routes` хватит SERIAL — маршрутов у нас десятки. Но `flights_current`, `flights_history` и `cdc_events` будут расти постоянно: каждые N минут по каждому маршруту добавляем события. Через год на проде SERIAL может переполниться. Поэтому там `BIGSERIAL`.
-
----
 
 ### ON DELETE RESTRICT vs ON DELETE CASCADE
 
@@ -37,8 +92,6 @@
 
 Почему? Потому что исторические данные ценны. Случайное `DELETE FROM routes WHERE ...` не должно уничтожать месяцы истории цен. `RESTRICT` — это защитный барьер: хочешь удалить маршрут — сначала сам разберись с историей.
 
----
-
 ### UNIQUE NULLS NOT DISTINCT
 
 Появилось в PostgreSQL 15. Решает неочевидную проблему с NULL в уникальных ключах.
@@ -47,8 +100,6 @@
 
 `UNIQUE NULLS NOT DISTINCT` говорит PostgreSQL: "для целей уникальности считай NULL = NULL". Теперь два рейса с одинаковым `(provider, NULL, departure_time, route_id)` — дубли.
 
----
-
 ### TIMESTAMPTZ vs TIMESTAMP
 
 `TIMESTAMP` — хранит дату и время без информации о таймзоне. Если сервер в UTC, а источник данных в UTC+7 — получишь путаницу.
@@ -56,8 +107,6 @@
 `TIMESTAMPTZ` (timestamp with time zone) — всегда хранит в UTC, автоматически конвертирует при записи и чтении. Можно передать время в любой таймзоне — PostgreSQL сам переведёт в UTC.
 
 Правило: **всегда используй TIMESTAMPTZ** в production системах, особенно если данные приходят из разных источников.
-
----
 
 ### Индекс WHERE is_current = true (partial index)
 
@@ -113,8 +162,6 @@ WHERE NOT EXISTS (
 
 `Decimal` — десятичная арифметика с точной репрезентацией. В PostgreSQL соответствующий тип — `NUMERIC`. Pydantic автоматически конвертирует строки и числа в `Decimal` при валидации, поэтому коннекторы могут передавать цену как строку `"105.50"` — модель разберётся сама.
 
----
-
 ### Timezone-aware datetime: почему это обязательно
 
 Aviasales возвращает время вылета в Bangkok (UTC+7), Trip.com — в UTC, Agoda — иногда без зоны вообще. Если хранить naive datetime (без tzinfo), сравнение `departure_time` между источниками станет некорректным: рейс в 10:00 Bangkok и рейс в 10:00 UTC выглядят одинаково, но это разные рейсы.
@@ -123,8 +170,6 @@ Aviasales возвращает время вылета в Bangkok (UTC+7), Trip.
 
 Правило: приводить все datetime к UTC в коннекторе/парсере до создания объекта `Flight`.
 
----
-
 ### Валидация IATA: field_validator vs Annotated
 
 Можно было написать через `Annotated[str, Field(pattern=r'^[A-Z]{3}$')]` — одна строка. Выбрал `@field_validator` по двум причинам:
@@ -132,13 +177,9 @@ Aviasales возвращает время вылета в Bangkok (UTC+7), Trip.
 1. Сообщение об ошибке информативнее: `"Must be a 3-letter uppercase IATA code, got: 'hanoi'"` vs стандартное `"String should match pattern"`.
 2. Один валидатор покрывает оба поля (`origin` и `destination`) через перечисление имён.
 
----
-
 ### from_attributes=True и совместимость с ORM
 
-`from_attributes=True` в `model_config` разрешает Pydantic читать поля из ORM-объектов через атрибуты (`.column_name`) вместо dict-доступа. Когда будем читать данные из PostgreSQL через SQLAlchemy, можно будет делать `Flight.model_validate(db_row)` напрямую, без ручного маппинга.
-
----
+`from_attributes=True` в `model_config` разрешает Pydantic читать поля из ORM-объектов через атрибуты (`.column_name`) вместо dict-доступа. Когда будем читать данные из PostgreSQL, можно будет делать `Flight.model_validate(db_row)` напрямую, без ручного маппинга.
 
 ### flight_number: Optional[str]
 
@@ -160,8 +201,6 @@ Aviasales возвращает время вылета в Bangkok (UTC+7), Trip.
 
 Единственный случай, когда Enum предпочтительнее — если нужно навешивать методы на значения (например, `event.is_price_change()`). Здесь таких требований нет.
 
----
-
 ### changed_fields: dict[str, dict[str, Any]]
 
 Структура `{"price": {"old": 120.0, "new": 105.0}}` — это намеренно гибкий формат. CDC-движок будет записывать сюда любые изменившиеся поля (не только цену). PostgreSQL хранит это как `JSONB` — индексируемый JSON с поддержкой GIN-индексов для поиска по содержимому.
@@ -180,16 +219,142 @@ Aviasales возвращает время вылета в Bangkok (UTC+7), Trip.
 
 Почему `_fetch` с подчёркиванием, а не `fetch` напрямую? Потому что логика оркестрации (логирование, error handling) должна всегда выполняться — если бы коннектор переопределял `fetch()` целиком, он мог бы забыть про catch. Одно подчёркивание сигнализирует: "это internal, переопределяй _fetch, не fetch".
 
----
-
 ### Async по умолчанию
 
 Все коннекторы используют `async def` — Playwright работает в async контексте, и блокирующий коннектор заморозил бы весь Prefect flow. Даже если конкретный коннектор использует синхронный httpx (без XHR-перехвата), его легко обернуть через `asyncio.to_thread()` внутри `_fetch`.
-
----
 
 ### Почему fetch возвращает `[]` при ошибке, а не пробрасывает исключение
 
 Pipeline должен быть resilient: если один источник недоступен, остальные должны продолжать работу. Prefect flow итерирует по маппингам и вызывает коннекторы — падение одного не должно прерывать цикл. Ошибка логируется через `logger.exception()` (с полным traceback) для последующего анализа.
 
 ---
+
+## TASK-011 — Raw Storage: save_raw и load_raw
+
+**Файлы:** `storage/raw.py`, `models/storage.py`
+
+### Зачем сохранять сырые файлы отдельно от БД
+
+Raw Storage — это страховка. Если парсер сломался или мы изменили логику извлечения данных — не нужно снова запускать браузер и ждать загрузки страницы. Достаточно взять уже сохранённый JSON-файл с диска и перепарсить его с новой логикой.
+
+### Структура файловой системы
+
+```
+raw_storage/
+  aviasales/
+    1/           ← route_id
+      20260618T013817_395285.json   ← timestamp в имени = уникальность
+    2/
+  trip/
+    1/
+```
+
+Путь `raw_storage/{source}/{route_id}/{timestamp}.json`. Timestamp с микросекундами гарантирует уникальность даже при двух вызовах в одну секунду.
+
+### Почему добавили id в RawSnapshot
+
+Изначально модель `RawSnapshot` не имела `id`. Но `load_raw(snapshot_id: int)` должна искать файл по ID из таблицы `raw_snapshots`. Добавили `id: int | None = None` — поле опциональное при создании объекта (до вставки в БД), заполняется после `RETURNING id`.
+
+### monkeypatch в тестах
+
+Тесты подменяют `RAW_STORAGE_DIR` на временную папку pytest (`tmp_path`) — файлы не засоряют рабочую директорию и автоматически удаляются. БД при этом используется настоящая: тесты проверяют реальную вставку в `raw_snapshots`.
+
+---
+
+## TASK-012 + TASK-013 — Aviasales: от Playwright к Travelpayouts API
+
+**Файлы:** `connectors/aviasales.py`, `parser/aviasales.py`
+
+### Что пробовали и почему не сработало
+
+Изначальный план: запустить Playwright, перехватить XHR с данными о рейсах. При исследовании нашли три слоя защиты:
+
+1. **AWS WAF** — `tickets-api.aviasales.ru/search/v2/start` возвращает **403** любому headless-браузеру. Сайт генерирует fingerprint-токен через `fp.js` и проверяет его на сервере.
+2. **WebSocket/Centrifuge** — реальные данные о рейсах приходят не через XHR, а через WebSocket (протокол Centrifuge, библиотека `lib-centrifuge.js`). Даже если бы WAF пропустил — нужно было бы парсить бинарный WebSocket-протокол.
+3. **Подловили на рекламе** — единственный крупный JSON который перехватили (~74KB) оказался данными рекламного блока Яндекса в формате JSON:API, а не рейсами.
+
+### Решение: официальный API
+
+Aviasales имеет официальный партнёрский API — **Travelpayouts Data API**. Бесплатная регистрация на travelpayouts.com даёт токен. Те же данные что на сайте, без anti-bot защиты.
+
+Endpoint: `https://api.travelpayouts.com/aviasales/v3/prices_for_dates`
+
+Токен хранится в `.env` как `TRAVELPAYOUTS_TOKEN`. Если не задан — коннектор возвращает `None` без ошибки (graceful degradation).
+
+Это стандартная ситуация в реальных проектах: начали со скрапинга, обнаружили серьёзную защиту, переключились на официальный API.
+
+### Формат ответа Travelpayouts v3
+
+```json
+{
+  "success": true,
+  "data": [
+    {
+      "origin": "HAN",
+      "destination": "KUL",
+      "price": 125,
+      "airline": "AK",
+      "flight_number": "D7535",
+      "departure_at": "2026-07-18T10:00:00+07:00",
+      "transfers": 0,
+      "duration_to": 200
+    }
+  ],
+  "currency": "usd"
+}
+```
+
+### Как парсим в Flight
+
+- `arrival_time` — в API нет, вычисляем: `departure_time + timedelta(minutes=duration_to)`
+- `airline` — только IATA код (`AK` = AirAsia), не полное название. Ограничение API.
+- `flight_number` — может быть `None` (чартеры). Поле опциональное в `Flight`.
+- Если поле отсутствует или невалидно — item пропускается с `logger.warning`, остальные парсятся.
+
+### fetch_raw vs _fetch: почему два метода
+
+`_fetch()` — контракт BaseConnector, возвращает `list[Flight]`. `fetch_raw()` — публичный метод, возвращает сырой `dict | None`. Разделение позволяет тестировать получение данных и парсинг независимо. `_fetch()` вызывает `fetch_raw()`, сохраняет через `save_raw()`, затем передаёт в `parse_aviasales()`.
+
+---
+
+## TASK-017 — CDC Engine: compare_snapshots
+
+### Ключ сравнения: почему именно эти 4 поля
+
+Ключ `(provider, flight_number, departure_time, route_id)` — минимально достаточный уникальный идентификатор рейса:
+- `provider` — разные источники могут вернуть одинаковый рейс, не смешиваем
+- `flight_number` — уникален в рамках дня, но не глобально (один рейс летит ежедневно)
+- `departure_time` — точный момент вылета, отличает рейсы разных дней
+- `route_id` — рейс привязан к нашему маршруту (SVO→LED ≠ LED→SVO)
+
+### Почему scraped_at не входит в сравниваемые поля
+
+`scraped_at` обновляется при каждом запросе. Включить его в `_COMPARE_FIELDS` → каждый snapshot генерирует UPDATE на все рейсы. Мы сравниваем только бизнес-поля: цена, авиакомпания, время прилёта, длительность, пересадки, валюта.
+
+### changed_fields: нативные Python-типы, не строки
+
+В `changed_fields` хранятся `{"old": Decimal("5000"), "new": Decimal("4500")}` — нативные типы из Pydantic модели. Конвертировать в строки здесь нет смысла: CdcEvent принимает `dict[str, dict[str, Any]]`, а сериализация (если нужна) — задача warehouse слоя.
+
+### Функция чистая: нет обращений к БД, нет side effects
+
+`compare_snapshots` — deterministic pure function: те же входные данные → те же события (кроме `occurred_at`, который `datetime.now()`). Это позволяет тестировать без моков и изолированно от остального стека.
+
+---
+
+## TASK-018 — Warehouse Current: apply_cdc_to_current
+
+### Почему используем _UPSERT для INSERT-событий, а не просто INSERT
+
+UNIQUE-ограничение на `(provider, flight_number, departure_time, route_id)` не даст создать дубль, если по какой-то причине INSERT-событие придёт повторно (например, при перезапуске после сбоя без сохранения состояния). `ON CONFLICT DO UPDATE` превращает любой INSERT в идемпотентную операцию. Это защита от "at-least-once" семантики.
+
+### IS NOT DISTINCT FROM для flight_number NULL
+
+`flight_number` в схеме — `VARCHAR(20)` без `NOT NULL` (чартеры). В WHERE нельзя писать `flight_number = %(flight_number)s`, потому что `NULL = NULL` — false в SQL. `IS NOT DISTINCT FROM` корректно обрабатывает NULL: `NULL IS NOT DISTINCT FROM NULL` = true.
+
+### Тест rollback: почему FailingCursor, а не реальная FK-ошибка
+
+Симулировать ошибку через неправильный route_id не надёжно (нужно знать что не существует), а через уникальное нарушение — не отражает "середину пакета". Patch через `FailingCursor` позволяет точно сказать "упасть на N-ом вызове execute" и проверить, что rollback действительно отменил предыдущий execute в той же транзакции.
+
+### Phase 3 завершена
+
+CDC Engine (TASK-017) + Warehouse Current (TASK-018) — ключевая связка: теперь система умеет сравнивать снапшоты и обновлять актуальное состояние в БД.

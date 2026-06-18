@@ -6,6 +6,7 @@ from pydantic import BaseModel, ConfigDict, field_validator
 class RawSnapshot(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
+    id: int | None = None
     source: str
     route_id: int
     file_path: str
