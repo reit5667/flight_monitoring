@@ -1,14 +1,10 @@
-import os
 from datetime import datetime, timezone
 
-import psycopg2
-from dotenv import load_dotenv
+from db import get_conn as _get_conn
 
 from models.cdc import CdcEvent
 from models.flight import Flight
-from warehouse.current import _get_conn, _parse_key, _index, _params
-
-load_dotenv()
+from warehouse.current import _parse_key, _index, _params
 
 
 _CLOSE_CURRENT = """

@@ -1,35 +1,18 @@
 import logging
-import os
 
-import psycopg2
-from dotenv import load_dotenv
-
-from connectors.agoda import AgodaConnector
 from connectors.aviasales import AviasalesConnector
 from connectors.base import BaseConnector
 from connectors.trip import TripConnector
+from db import get_conn as _get_conn
 from models.flight import Flight
 from models.route import Route, SourceMapping
-
-load_dotenv()
 
 logger = logging.getLogger(__name__)
 
 _CONNECTOR_REGISTRY: dict[str, BaseConnector] = {
     "aviasales": AviasalesConnector(),
     "trip": TripConnector(),
-    "agoda": AgodaConnector(),
 }
-
-
-def _get_conn():
-    return psycopg2.connect(
-        host=os.getenv("POSTGRES_HOST", "localhost"),
-        port=int(os.getenv("POSTGRES_PORT", "5432")),
-        dbname=os.getenv("POSTGRES_DB", "flight_monitor"),
-        user=os.getenv("POSTGRES_USER", "flight_user"),
-        password=os.getenv("POSTGRES_PASSWORD", "changeme"),
-    )
 
 
 def _load_route(conn, route_id: int) -> Route:

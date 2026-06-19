@@ -3,8 +3,8 @@ import psycopg2.extras
 from decimal import Decimal
 from datetime import datetime
 
+from db import get_conn as _get_conn
 from models.cdc import CdcEvent
-from warehouse.current import _get_conn
 
 
 def _serialize_changed_fields(changed_fields: dict) -> str:

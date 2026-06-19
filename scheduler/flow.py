@@ -1,27 +1,14 @@
 import logging
 import os
 
-import psycopg2
-from dotenv import load_dotenv
 from prefect import flow, task
 
+from db import get_conn as _get_conn
 from metrics.prometheus import start_metrics_server
 from models.route import Route
 from scheduler.pipeline import PipelineResult, run_pipeline_for_route
 
-load_dotenv()
-
 logger = logging.getLogger(__name__)
-
-
-def _get_conn():
-    return psycopg2.connect(
-        host=os.getenv("POSTGRES_HOST", "localhost"),
-        port=int(os.getenv("POSTGRES_PORT", "5432")),
-        dbname=os.getenv("POSTGRES_DB", "flight_monitor"),
-        user=os.getenv("POSTGRES_USER", "flight_user"),
-        password=os.getenv("POSTGRES_PASSWORD", "changeme"),
-    )
 
 
 def _load_enabled_routes() -> list[Route]:

@@ -60,8 +60,9 @@ Prefect Scheduler
 | `PROJECT_STATUS.md` | Текущий трек, история сессий |
 | `migrations/` | SQL миграции (применяются через docker compose) |
 | `models/` | Pydantic модели (Flight, Route, CdcEvent и др.) |
-| `connectors/` | Один файл на источник, все наследуют BaseConnector |
-| `parser/` | Один файл на источник, raw JSON → list[Flight] |
+| `db.py` | Единый `get_conn()` для всего проекта |
+| `connectors/` | Один файл на источник, все наследуют BaseConnector (сейчас: aviasales, trip) |
+| `parser/` | Один файл на источник, raw JSON → list[Flight] (сейчас: aviasales, trip) |
 | `cdc/engine.py` | Чистая функция: compare_snapshots → list[CdcEvent] |
 | `warehouse/` | Запись в БД (current, history, events) |
 | `planner/search_planner.py` | Оркестрация коннекторов для маршрута → dict[source, list[Flight]] |
@@ -75,7 +76,10 @@ Prefect Scheduler
 - **Travelpayouts API: формат даты** — `departure_at` передаётся как `%Y-%m` (месяц), не `%Y-%m-%d`. Конкретная дата возвращает пустой ответ если нет кэша; месяц возвращает топ дешёвых вариантов за весь месяц.
 - **`flights_history.provider`** — колонка называется `provider` (не `source`). `source` используется в маппингах и raw storage, но не в таблицах рейсов.
 - **Trip.com XHR-паттерн**: `/flights/api/` → `data.flightItineraryList`
-- **Agoda XHR-паттерн**: `/api/cronos/flight/` → `data.flights`
+- **Agoda удалён** — WAF блокировал headless Playwright (302→404), функционально дублировал Trip.com. Оставлены Aviasales + Trip.com.
+- **Trip.com WAF (known limitation)** — headless=True получает 432, данных нет. Код падает gracefully (возвращает `[]`). Решение: playwright-stealth или proxy (не реализовано).
+- **`db.py`** — единый `get_conn()` для всего проекта. Импортировать как `from db import get_conn`. Раньше было 5 копий по модулям.
+- **Notifications подключены в pipeline.py** — `check_notification_rules` вызывается внутри `if events:` блока, ДО `apply_cdc_to_current`. Соединение открывается отдельно через `_get_conn()`.
 - **CDC — pure function** — engine.py не обращается к БД, только сравнивает списки
 - **Warehouse — три функции**: `apply_cdc_to_current` (flights_current), `append_history` (SCD Type 2), `save_cdc_events` (batch insert)
 - **Raw Storage всегда сохраняется** — можно перепарсить без повторного запроса

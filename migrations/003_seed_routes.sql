@@ -18,13 +18,10 @@ SELECT r.route_id, v.source, v.source_origin, v.source_destination, true
 FROM (VALUES
     ('HAN', 'KUL', 'aviasales', 'HAN', 'KUL'),
     ('HAN', 'KUL', 'trip',      'HAN', 'KUL'),
-    ('HAN', 'KUL', 'agoda',     'HAN', 'KUL'),
     ('KUL', 'CMB', 'aviasales', 'KUL', 'CMB'),
     ('KUL', 'CMB', 'trip',      'KUL', 'CMB'),
-    ('KUL', 'CMB', 'agoda',     'KUL', 'CMB'),
     ('CMB', 'MOW', 'aviasales', 'CMB', 'SVO'),
-    ('CMB', 'MOW', 'trip',      'CMB', 'MOW'),
-    ('CMB', 'MOW', 'agoda',     'CMB', 'MOW')
+    ('CMB', 'MOW', 'trip',      'CMB', 'MOW')
 ) AS v(origin, destination, source, source_origin, source_destination)
 JOIN routes r ON r.origin = v.origin AND r.destination = v.destination
 ON CONFLICT (route_id, source) DO NOTHING;

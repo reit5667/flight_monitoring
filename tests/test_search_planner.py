@@ -21,7 +21,6 @@ _ROUTE = Route(
 _MAPPINGS = [
     SourceMapping(id=1, route_id=1, source="aviasales", source_origin="HAN", source_destination="KUL"),
     SourceMapping(id=2, route_id=1, source="trip", source_origin="HAN", source_destination="KUL"),
-    SourceMapping(id=3, route_id=1, source="agoda", source_origin="HAN", source_destination="KUL"),
 ]
 
 
@@ -58,48 +57,42 @@ def _patch_db(route=_ROUTE, mappings=_MAPPINGS):
 
 
 @pytest.mark.asyncio
-async def test_returns_dict_with_all_three_sources():
-    """When all three mappings are enabled, result has keys for all three sources."""
+async def test_returns_dict_with_all_sources():
+    """When all mappings are enabled, result has keys for all sources."""
     avi_flight = _make_flight("aviasales")
     trip_flight = _make_flight("trip")
-    agoda_flight = _make_flight("agoda")
 
     conn_p, route_p, map_p = _patch_db()
     with conn_p, route_p, map_p:
         with patch("planner.search_planner._CONNECTOR_REGISTRY", {
             "aviasales": MagicMock(fetch=AsyncMock(return_value=[avi_flight])),
             "trip": MagicMock(fetch=AsyncMock(return_value=[trip_flight])),
-            "agoda": MagicMock(fetch=AsyncMock(return_value=[agoda_flight])),
-        }):
-            result = await run_search_for_route(1)
-
-    assert set(result.keys()) == {"aviasales", "trip", "agoda"}
-    assert result["aviasales"] == [avi_flight]
-    assert result["trip"] == [trip_flight]
-    assert result["agoda"] == [agoda_flight]
-
-
-@pytest.mark.asyncio
-async def test_skips_source_without_mapping():
-    """When only two mappings are enabled, result has only two keys."""
-    two_mappings = [
-        SourceMapping(id=1, route_id=1, source="aviasales", source_origin="HAN", source_destination="KUL"),
-        SourceMapping(id=2, route_id=1, source="trip", source_origin="HAN", source_destination="KUL"),
-    ]
-    avi_flight = _make_flight("aviasales")
-    trip_flight = _make_flight("trip")
-
-    conn_p, route_p, map_p = _patch_db(mappings=two_mappings)
-    with conn_p, route_p, map_p:
-        with patch("planner.search_planner._CONNECTOR_REGISTRY", {
-            "aviasales": MagicMock(fetch=AsyncMock(return_value=[avi_flight])),
-            "trip": MagicMock(fetch=AsyncMock(return_value=[trip_flight])),
-            "agoda": MagicMock(fetch=AsyncMock(return_value=[])),
         }):
             result = await run_search_for_route(1)
 
     assert set(result.keys()) == {"aviasales", "trip"}
-    assert "agoda" not in result
+    assert result["aviasales"] == [avi_flight]
+    assert result["trip"] == [trip_flight]
+
+
+@pytest.mark.asyncio
+async def test_skips_source_without_mapping():
+    """When only one mapping is enabled, result has only one key."""
+    one_mapping = [
+        SourceMapping(id=1, route_id=1, source="aviasales", source_origin="HAN", source_destination="KUL"),
+    ]
+    avi_flight = _make_flight("aviasales")
+
+    conn_p, route_p, map_p = _patch_db(mappings=one_mapping)
+    with conn_p, route_p, map_p:
+        with patch("planner.search_planner._CONNECTOR_REGISTRY", {
+            "aviasales": MagicMock(fetch=AsyncMock(return_value=[avi_flight])),
+            "trip": MagicMock(fetch=AsyncMock(return_value=[])),
+        }):
+            result = await run_search_for_route(1)
+
+    assert set(result.keys()) == {"aviasales"}
+    assert "trip" not in result
 
 
 @pytest.mark.asyncio

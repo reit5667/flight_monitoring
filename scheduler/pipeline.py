@@ -1,13 +1,11 @@
 import logging
-import os
 from datetime import datetime, timezone
 from decimal import Decimal
 
-import psycopg2
-from dotenv import load_dotenv
 from pydantic import BaseModel
 
 from cdc.engine import compare_snapshots
+from db import get_conn as _get_conn
 from metrics.prometheus import (
     cdc_events_total,
     connector_flights_found,
@@ -15,12 +13,14 @@ from metrics.prometheus import (
     pipeline_duration_seconds,
 )
 from models.flight import Flight
+from models.route import Route
+from notifications.dedup import should_send
+from notifications.rules import check_notification_rules
+from notifications.telegram import send_notification
 from planner.search_planner import run_search_for_route
 from warehouse.current import apply_cdc_to_current
 from warehouse.events import save_cdc_events
 from warehouse.history import append_history
-
-load_dotenv()
 
 logger = logging.getLogger(__name__)
 
@@ -33,14 +33,23 @@ class PipelineResult(BaseModel):
     errors: list[str]
 
 
-def _get_conn():
-    return psycopg2.connect(
-        host=os.getenv("POSTGRES_HOST", "localhost"),
-        port=int(os.getenv("POSTGRES_PORT", "5432")),
-        dbname=os.getenv("POSTGRES_DB", "flight_monitor"),
-        user=os.getenv("POSTGRES_USER", "flight_user"),
-        password=os.getenv("POSTGRES_PASSWORD", "changeme"),
-    )
+def _load_route(route_id: int) -> Route:
+    with _get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT route_id, origin, destination, date_from, date_to,
+                       max_price, currency, priority, search_interval, enabled, notes
+                FROM routes WHERE route_id = %s
+                """,
+                (route_id,),
+            )
+            row = cur.fetchone()
+    if row is None:
+        raise ValueError(f"Route {route_id} not found")
+    cols = ["route_id", "origin", "destination", "date_from", "date_to",
+            "max_price", "currency", "priority", "search_interval", "enabled", "notes"]
+    return Route(**dict(zip(cols, row)))
 
 
 def _load_current_flights(route_id: int, source: str) -> list[Flight]:
@@ -89,6 +98,8 @@ async def run_pipeline_for_route(route_id: int) -> PipelineResult:
 
     logger.info("pipeline: route_id=%d start", route_id)
 
+    route = _load_route(route_id)
+
     logger.info("pipeline: route_id=%d search_planner start", route_id)
     search_results = await run_search_for_route(route_id)
     logger.info(
@@ -116,6 +127,13 @@ async def run_pipeline_for_route(route_id: int) -> PipelineResult:
             )
 
             if events:
+                # Check notification rules BEFORE warehouse write (history must reflect previous state)
+                with _get_conn() as conn:
+                    for event in events:
+                        trigger = check_notification_rules(event, route, conn)
+                        if trigger and should_send(event, trigger.rule_type):
+                            await send_notification(trigger.message)
+
                 apply_cdc_to_current(events, new_flights)
                 logger.info("pipeline: route_id=%d source=%s apply_cdc_to_current done", route_id, source)
 

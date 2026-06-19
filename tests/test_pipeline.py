@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from models.cdc import CdcEvent
 from models.flight import Flight
+from models.route import Route
 from scheduler.pipeline import PipelineResult, run_pipeline_for_route
 
 _NOW = datetime(2026, 6, 18, 12, 0, tzinfo=timezone.utc)
@@ -31,6 +32,16 @@ def _make_flight(provider: str = "aviasales", price: str = "125") -> Flight:
     )
 
 
+def _make_route() -> Route:
+    return Route(
+        route_id=1,
+        origin="HAN",
+        destination="KUL",
+        date_from=date(2026, 7, 1),
+        date_to=date(2026, 12, 31),
+    )
+
+
 def _make_event(event_type: str, source: str = "aviasales") -> CdcEvent:
     return CdcEvent(
         event_type=event_type,
@@ -42,19 +53,29 @@ def _make_event(event_type: str, source: str = "aviasales") -> CdcEvent:
     )
 
 
+def _mock_conn():
+    conn = MagicMock()
+    conn.__enter__ = MagicMock(return_value=conn)
+    conn.__exit__ = MagicMock(return_value=False)
+    return conn
+
+
 @pytest.mark.asyncio
 async def test_pipeline_first_run_all_inserts():
     """On first run (empty flights_current) all fetched flights become INSERT events."""
     flight = _make_flight()
     insert_event = _make_event("INSERT")
 
-    with patch("scheduler.pipeline.run_search_for_route", new=AsyncMock(return_value={"aviasales": [flight]})):
-        with patch("scheduler.pipeline._load_current_flights", return_value=[]):
-            with patch("scheduler.pipeline.compare_snapshots", return_value=[insert_event]):
-                with patch("scheduler.pipeline.apply_cdc_to_current") as mock_apply:
-                    with patch("scheduler.pipeline.append_history") as mock_history:
-                        with patch("scheduler.pipeline.save_cdc_events") as mock_save:
-                            result = await run_pipeline_for_route(1)
+    with patch("scheduler.pipeline._load_route", return_value=_make_route()):
+        with patch("scheduler.pipeline.run_search_for_route", new=AsyncMock(return_value={"aviasales": [flight]})):
+            with patch("scheduler.pipeline._load_current_flights", return_value=[]):
+                with patch("scheduler.pipeline.compare_snapshots", return_value=[insert_event]):
+                    with patch("scheduler.pipeline._get_conn", return_value=_mock_conn()):
+                        with patch("scheduler.pipeline.check_notification_rules", return_value=None):
+                            with patch("scheduler.pipeline.apply_cdc_to_current") as mock_apply:
+                                with patch("scheduler.pipeline.append_history") as mock_history:
+                                    with patch("scheduler.pipeline.save_cdc_events") as mock_save:
+                                        result = await run_pipeline_for_route(1)
 
     assert isinstance(result, PipelineResult)
     assert result.route_id == 1
@@ -74,13 +95,14 @@ async def test_pipeline_no_change_skips_warehouse():
     """When CDC produces no events, warehouse functions are not called."""
     flight = _make_flight()
 
-    with patch("scheduler.pipeline.run_search_for_route", new=AsyncMock(return_value={"aviasales": [flight]})):
-        with patch("scheduler.pipeline._load_current_flights", return_value=[flight]):
-            with patch("scheduler.pipeline.compare_snapshots", return_value=[]):
-                with patch("scheduler.pipeline.apply_cdc_to_current") as mock_apply:
-                    with patch("scheduler.pipeline.append_history") as mock_history:
-                        with patch("scheduler.pipeline.save_cdc_events") as mock_save:
-                            result = await run_pipeline_for_route(1)
+    with patch("scheduler.pipeline._load_route", return_value=_make_route()):
+        with patch("scheduler.pipeline.run_search_for_route", new=AsyncMock(return_value={"aviasales": [flight]})):
+            with patch("scheduler.pipeline._load_current_flights", return_value=[flight]):
+                with patch("scheduler.pipeline.compare_snapshots", return_value=[]):
+                    with patch("scheduler.pipeline.apply_cdc_to_current") as mock_apply:
+                        with patch("scheduler.pipeline.append_history") as mock_history:
+                            with patch("scheduler.pipeline.save_cdc_events") as mock_save:
+                                result = await run_pipeline_for_route(1)
 
     assert result.events_count == {"INSERT": 0, "UPDATE": 0, "DELETE": 0}
     mock_apply.assert_not_called()
@@ -93,8 +115,6 @@ async def test_pipeline_multiple_sources():
     """Pipeline processes all sources returned by search planner."""
     avi = _make_flight("aviasales")
     trip = _make_flight("trip")
-    insert_avi = _make_event("INSERT", "aviasales")
-    insert_trip = _make_event("INSERT", "trip")
 
     search_result = {"aviasales": [avi], "trip": [trip]}
 
@@ -104,13 +124,16 @@ async def test_pipeline_multiple_sources():
         src = current[0].provider
         return [_make_event("INSERT", src)]
 
-    with patch("scheduler.pipeline.run_search_for_route", new=AsyncMock(return_value=search_result)):
-        with patch("scheduler.pipeline._load_current_flights", return_value=[]):
-            with patch("scheduler.pipeline.compare_snapshots", side_effect=fake_cdc):
-                with patch("scheduler.pipeline.apply_cdc_to_current"):
-                    with patch("scheduler.pipeline.append_history"):
-                        with patch("scheduler.pipeline.save_cdc_events"):
-                            result = await run_pipeline_for_route(1)
+    with patch("scheduler.pipeline._load_route", return_value=_make_route()):
+        with patch("scheduler.pipeline.run_search_for_route", new=AsyncMock(return_value=search_result)):
+            with patch("scheduler.pipeline._load_current_flights", return_value=[]):
+                with patch("scheduler.pipeline.compare_snapshots", side_effect=fake_cdc):
+                    with patch("scheduler.pipeline._get_conn", return_value=_mock_conn()):
+                        with patch("scheduler.pipeline.check_notification_rules", return_value=None):
+                            with patch("scheduler.pipeline.apply_cdc_to_current"):
+                                with patch("scheduler.pipeline.append_history"):
+                                    with patch("scheduler.pipeline.save_cdc_events"):
+                                        result = await run_pipeline_for_route(1)
 
     assert set(result.sources_processed) == {"aviasales", "trip"}
     assert result.events_count["INSERT"] == 2
@@ -135,13 +158,16 @@ async def test_pipeline_error_captured_in_result():
     def fake_cdc(prev, curr):
         return [_make_event("INSERT", curr[0].provider)] if curr else []
 
-    with patch("scheduler.pipeline.run_search_for_route", new=AsyncMock(return_value=search_result)):
-        with patch("scheduler.pipeline._load_current_flights", side_effect=load_side_effect):
-            with patch("scheduler.pipeline.compare_snapshots", side_effect=fake_cdc):
-                with patch("scheduler.pipeline.apply_cdc_to_current"):
-                    with patch("scheduler.pipeline.append_history"):
-                        with patch("scheduler.pipeline.save_cdc_events"):
-                            result = await run_pipeline_for_route(1)
+    with patch("scheduler.pipeline._load_route", return_value=_make_route()):
+        with patch("scheduler.pipeline.run_search_for_route", new=AsyncMock(return_value=search_result)):
+            with patch("scheduler.pipeline._load_current_flights", side_effect=load_side_effect):
+                with patch("scheduler.pipeline.compare_snapshots", side_effect=fake_cdc):
+                    with patch("scheduler.pipeline._get_conn", return_value=_mock_conn()):
+                        with patch("scheduler.pipeline.check_notification_rules", return_value=None):
+                            with patch("scheduler.pipeline.apply_cdc_to_current"):
+                                with patch("scheduler.pipeline.append_history"):
+                                    with patch("scheduler.pipeline.save_cdc_events"):
+                                        result = await run_pipeline_for_route(1)
 
     assert len(result.errors) == 1
     assert "aviasales" in result.errors[0]
@@ -151,8 +177,9 @@ async def test_pipeline_error_captured_in_result():
 @pytest.mark.asyncio
 async def test_pipeline_empty_search_results():
     """No sources returned by search planner → empty result, no errors."""
-    with patch("scheduler.pipeline.run_search_for_route", new=AsyncMock(return_value={})):
-        result = await run_pipeline_for_route(1)
+    with patch("scheduler.pipeline._load_route", return_value=_make_route()):
+        with patch("scheduler.pipeline.run_search_for_route", new=AsyncMock(return_value={})):
+            result = await run_pipeline_for_route(1)
 
     assert result.route_id == 1
     assert result.sources_processed == []
@@ -163,8 +190,9 @@ async def test_pipeline_empty_search_results():
 @pytest.mark.asyncio
 async def test_pipeline_result_has_duration():
     """PipelineResult.duration_seconds is a non-negative float."""
-    with patch("scheduler.pipeline.run_search_for_route", new=AsyncMock(return_value={})):
-        result = await run_pipeline_for_route(1)
+    with patch("scheduler.pipeline._load_route", return_value=_make_route()):
+        with patch("scheduler.pipeline.run_search_for_route", new=AsyncMock(return_value={})):
+            result = await run_pipeline_for_route(1)
 
     assert isinstance(result.duration_seconds, float)
     assert result.duration_seconds >= 0

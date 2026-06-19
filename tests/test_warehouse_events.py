@@ -37,6 +37,14 @@ def _make_flight(**kwargs) -> Flight:
 
 @pytest.fixture(autouse=True)
 def cleanup():
+    conn = _get_conn()
+    with conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "DELETE FROM cdc_events WHERE source = 'aviasales' AND route_id = %s",
+                (_ROUTE_ID,),
+            )
+    conn.close()
     yield
     conn = _get_conn()
     with conn:

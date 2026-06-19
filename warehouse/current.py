@@ -1,23 +1,9 @@
-import os
 from datetime import datetime
 
-import psycopg2
-from dotenv import load_dotenv
+from db import get_conn as _get_conn
 
 from models.cdc import CdcEvent
 from models.flight import Flight
-
-load_dotenv()
-
-
-def _get_conn():
-    return psycopg2.connect(
-        host=os.getenv("POSTGRES_HOST", "localhost"),
-        port=int(os.getenv("POSTGRES_PORT", "5432")),
-        dbname=os.getenv("POSTGRES_DB", "flight_monitor"),
-        user=os.getenv("POSTGRES_USER", "flight_user"),
-        password=os.getenv("POSTGRES_PASSWORD", "changeme"),
-    )
 
 
 def _parse_key(flight_key: str) -> tuple[str, str | None, datetime, int]:
