@@ -16,6 +16,7 @@ from models.flight import Flight
 from models.route import Route
 from notifications.dedup import should_send
 from notifications.rules import check_notification_rules
+from notifications.subscriptions import check_subscriptions
 from notifications.telegram import send_notification
 from planner.search_planner import run_search_for_route
 from warehouse.current import apply_cdc_to_current
@@ -133,6 +134,9 @@ async def run_pipeline_for_route(route_id: int) -> PipelineResult:
                         trigger = check_notification_rules(event, route, conn)
                         if trigger and should_send(event, trigger.rule_type):
                             await send_notification(trigger.message)
+
+                # Check per-user subscriptions for price alerts
+                await check_subscriptions(events, route_id)
 
                 apply_cdc_to_current(events, new_flights)
                 logger.info("pipeline: route_id=%d source=%s apply_cdc_to_current done", route_id, source)

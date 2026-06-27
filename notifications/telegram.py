@@ -8,14 +8,17 @@ from telegram.error import TelegramError
 logger = logging.getLogger(__name__)
 
 
-async def send_notification(message: str) -> bool:
-    """Send HTML-formatted message to Telegram chat. Returns True on success."""
+async def send_notification(message: str, chat_id: str | None = None) -> bool:
+    """Send HTML-formatted message to Telegram chat. Returns True on success.
+
+    chat_id: override default TELEGRAM_CHAT_ID (used for per-user subscription alerts).
+    """
     if not message:
         logger.warning("send_notification called with empty message")
         return False
 
     token = os.getenv("TELEGRAM_BOT_TOKEN", "")
-    chat_id = os.getenv("TELEGRAM_CHAT_ID", "")
+    chat_id = chat_id or os.getenv("TELEGRAM_CHAT_ID", "")
 
     if not token or not chat_id:
         logger.warning("TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID not set")
