@@ -54,8 +54,9 @@ _CB_CAL_DAY = "cd"    # cd:{rid}:{org}:{dst}:{adt}:{step}:{from}:{y}:{m}:{d}
 _CB_CAL_NAV = "cn"    # cn:{rid}:{org}:{dst}:{adt}:{step}:{from}:{y}:{m}
 _CB_HIST    = "hist"  # hist:{route_id}:{origin}:{dest}
 _CB_ONEWAY  = "ow"    # ow:{rid}:{org}:{dst}:{adt}:{from_date}
-_CB_WATCH   = "watch" # watch:{route_id}:{origin}:{dest}:{price_int}
-_CB_UNWATCH = "unwatch" # unwatch:{sub_id}
+_CB_WATCH     = "watch"    # watch:{route_id}:{origin}:{dest}:{price_int}
+_CB_UNWATCH   = "unwatch"  # unwatch:{sub_id}
+_CB_CHEAPEST  = "cheap"    # cheap:{route_id}:{origin}:{dest}:{adults}:{year}:{month}
 
 _MENU_SEARCH  = "🔍 Поиск"
 _MENU_HISTORY = "📊 История цен"
@@ -133,6 +134,11 @@ def _build_calendar(
         day_rows.append(row)
 
     rows = [header, dow_header] + day_rows
+    if step == "f":
+        rows.append([InlineKeyboardButton(
+            f"📅 Весь {_MONTHS_RU[month].lower()} (самый дешёвый)",
+            callback_data=f"{_CB_CHEAPEST}:{rid}:{org}:{dst}:{adt}:{year}:{month}",
+        )])
     if step == "t":
         rows.append([InlineKeyboardButton(
             "🚀 Обратный билет не нужен",
@@ -666,6 +672,75 @@ async def cb_cal_day(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         )
 
 
+async def cb_cheapest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Cheapest-in-month search: find top-3 cheapest days for the selected month."""
+    query = update.callback_query
+    await query.answer()
+
+    # cheap:{rid}:{org}:{dst}:{adt}:{year}:{month}
+    _, rid, org, dst, adt, y, m = query.data.split(":")
+    adults = int(adt)
+    year, month = int(y), int(m)
+    month_str = f"{year}-{month:02d}"
+    month_label = f"{_MONTHS_RU[month]} {year}"
+
+    await query.edit_message_text(
+        f"Ищу самые дешёвые рейсы {org} → {dst} за {month_label}…",
+        parse_mode=ParseMode.HTML,
+    )
+
+    items = await _fetch_flights(org, dst, month_str)
+    if not items:
+        await query.edit_message_text(
+            f"По маршруту <b>{org} → {dst}</b> за {month_label} ничего не найдено.",
+            parse_mode=ParseMode.HTML,
+        )
+        return
+
+    items.sort(key=lambda x: x["price"])
+    top3 = items[:3]
+
+    label = route_label(org, dst)
+    lines = [f"<b>{label}</b> — топ дешёвых дат за {month_label} ({adults} взр.):\n"]
+    for i, item in enumerate(top3, 1):
+        dep = datetime.fromisoformat(item["departure_at"])
+        price = item["price"]
+        stops = item.get("transfers", 0)
+        airline = item.get("airline", "?")
+        duration = item.get("duration_to") or item.get("duration") or 0
+        stops_str = "прямой" if stops == 0 else f"{stops} пер."
+        url = _aviasales_url(org, dst, dep.date(), adults)
+        lines.append(
+            f"{i}. <b>{dep.strftime('%d %b').lower()}</b>  {_fmt_duration(duration)}  {stops_str}  [{airline}]\n"
+            f"   {price:,}₽/чел"
+            + (f" · <b>{price * adults:,}₽ итого</b>" if adults > 1 else "")
+            + f"\n   <a href=\"{url}\">Aviasales</a>\n"
+        )
+
+    best_price = top3[0]["price"]
+    lines.append(f"\nЛучшая цена в месяце: <b>{best_price:,}₽</b>/чел")
+
+    keyboard_rows = []
+    cb_watch = f"{_CB_WATCH}:{rid}:{org}:{dst}:{best_price}"
+    keyboard_rows.append([InlineKeyboardButton(f"🔔 Следить ({best_price:,}₽)", callback_data=cb_watch)])
+    # allow switching to another month
+    if month < 12:
+        next_y, next_m = year, month + 1
+    else:
+        next_y, next_m = year + 1, 1
+    keyboard_rows.append([InlineKeyboardButton(
+        f"➡️ {_MONTHS_RU[next_m]} {next_y}",
+        callback_data=f"{_CB_CHEAPEST}:{rid}:{org}:{dst}:{adt}:{next_y}:{next_m}",
+    )])
+
+    await query.edit_message_text(
+        "\n".join(lines),
+        parse_mode=ParseMode.HTML,
+        disable_web_page_preview=True,
+        reply_markup=InlineKeyboardMarkup(keyboard_rows),
+    )
+
+
 async def cb_oneway(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """One-way search: no return date, search the month of from_date."""
     query = update.callback_query
@@ -802,6 +877,7 @@ def main() -> None:
     app.add_handler(CallbackQueryHandler(cb_route,        pattern=rf"^{_CB_ROUTE}:"))
     app.add_handler(CallbackQueryHandler(cb_cal_nav,      pattern=rf"^{_CB_CAL_NAV}:"))
     app.add_handler(CallbackQueryHandler(cb_cal_day,      pattern=rf"^{_CB_CAL_DAY}:"))
+    app.add_handler(CallbackQueryHandler(cb_cheapest,     pattern=rf"^{_CB_CHEAPEST}:"))
     app.add_handler(CallbackQueryHandler(cb_oneway,       pattern=rf"^{_CB_ONEWAY}:"))
     app.add_handler(CallbackQueryHandler(cb_hist,         pattern=rf"^{_CB_HIST}:"))
     app.add_handler(CallbackQueryHandler(cb_watch,        pattern=rf"^{_CB_WATCH}:"))

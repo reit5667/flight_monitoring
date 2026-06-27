@@ -750,8 +750,10 @@
         "Шаг 3: Ввести / — в подсказках видны search, history, help",
         "Шаг 4: Нажать «ℹ️ Помощь» — показывается справка"
       ],
-      "dependencies": ["TASK-023"],
-      "status": "pending"
+      "dependencies": [
+        "TASK-023"
+      ],
+      "status": "done"
     },
     {
       "id": "TASK-032",
@@ -770,8 +772,10 @@
         "Шаг 3: Выбрать маршрут — в результате указана итоговая цена на 2 чел.",
         "Шаг 4: Повторить с «1 чел.» — итоговая цена не дублируется"
       ],
-      "dependencies": ["TASK-031"],
-      "status": "pending"
+      "dependencies": [
+        "TASK-031"
+      ],
+      "status": "done"
     },
     {
       "id": "TASK-033",
@@ -791,8 +795,10 @@
         "Шаг 3: Финальное сообщение содержит sparkline и данные о ценах",
         "Шаг 4: При пустой flights_history — показывает заглушку без ошибок"
       ],
-      "dependencies": ["TASK-031"],
-      "status": "pending"
+      "dependencies": [
+        "TASK-031"
+      ],
+      "status": "done"
     },
     {
       "id": "TASK-034",
@@ -813,8 +819,109 @@
         "Шаг 3: Поднять цену на 30% — пришёл алёрт о росте",
         "Шаг 4: /unwatch → нажать отмену подписки → запись деактивирована, алёрты больше не приходят"
       ],
-      "dependencies": ["TASK-031", "TASK-023"],
-      "status": "pending"
+      "dependencies": [
+        "TASK-031",
+        "TASK-023"
+      ],
+      "status": "done"
+    },
+    {
+      "id": "TASK-035",
+      "category": "bot",
+      "priority": "high",
+      "status": "done",
+      "description": "Airport name dictionary + free-text city input for route selection",
+      "acceptance_criteria": [
+        "bot/airports.py содержит словарь IATA → русское название для 120+ аэропортов",
+        "route_label('HAN','BKK') возвращает 'Ханой → Бангкок'",
+        "parse_route_input принимает IATA-коды, русские и английские названия городов",
+        "Кнопки маршрутов в /search и /history показывают читаемые названия (не сырые коды)",
+        "При вводе свободного маршрута работает 'Ханой Бангкок', 'Hanoi Bangkok', 'HAN BKK'"
+      ],
+      "test_steps": [
+        "python3 -c \"from bot.airports import route_label, parse_route_input; print(route_label('HAN','BKK')); print(parse_route_input('Ханой Бангкок'))\"",
+        "Запустить бота, нажать Поиск → убедиться что маршруты показаны с названиями городов",
+        "Нажать 'Любой маршрут', ввести 'Ханой Бангкок' → должен открыться календарь"
+      ],
+      "dependencies": [
+        "TASK-031"
+      ]
+    },
+    {
+      "id": "TASK-036",
+      "category": "bot",
+      "priority": "high",
+      "status": "done",
+      "description": "Telegram Bot: гибкий поиск — 'самый дешёвый рейс в месяце' без фиксированной даты",
+      "acceptance_criteria": [
+        "После выбора маршрута появляется опция 'Весь месяц' рядом с календарём",
+        "При выборе 'Весь месяц' бот ищет дешевейший рейс за ближайшие 30 дней",
+        "Результат показывает топ-3 дешёвых даты с ценами и ссылками"
+      ],
+      "test_steps": [
+        "Нажать Поиск → выбрать маршрут → проверить наличие кнопки 'Весь месяц'",
+        "Нажать 'Весь месяц' → бот должен вернуть топ-3 даты с ценами"
+      ],
+      "dependencies": [
+        "TASK-031",
+        "TASK-032"
+      ]
+    },
+    {
+      "id": "TASK-037",
+      "category": "bot",
+      "priority": "medium",
+      "status": "pending",
+      "description": "Telegram Bot: inline-автодополнение города при вводе маршрута",
+      "acceptance_criteria": [
+        "При вводе от 3 символов ('Хан', 'Ban') бот показывает inline-кнопки с вариантами",
+        "Пользователь выбирает город кнопкой — не нужно помнить IATA",
+        "Работает через inline query mode или через reply с кнопками-подсказками"
+      ],
+      "test_steps": [
+        "Включить inline mode у бота в BotFather",
+        "Ввести 'Хан' в поле 'Любой маршрут' → должны появиться кнопки Ханой, Ханта и т.д."
+      ],
+      "dependencies": [
+        "TASK-035"
+      ]
+    },
+    {
+      "id": "TASK-038",
+      "category": "bot",
+      "priority": "medium",
+      "status": "pending",
+      "description": "Telegram Mini App: дашборд с историей цен и графиками прямо в боте",
+      "acceptance_criteria": [
+        "Кнопка 'График' в результатах поиска открывает WebApp внутри Telegram",
+        "WebApp показывает график цены за 30 дней по маршруту (Chart.js или аналог)",
+        "Не требует авторизации, данные берёт из API бота"
+      ],
+      "test_steps": [
+        "Нажать 'График' → внутри Telegram открывается страница с графиком",
+        "График корректно отображает историю цен по выбранному маршруту"
+      ],
+      "dependencies": [
+        "TASK-033"
+      ]
+    },
+    {
+      "id": "TASK-039",
+      "category": "bot",
+      "priority": "low",
+      "status": "pending",
+      "description": "Telegram Bot: команда /mystats — личная статистика пользователя",
+      "acceptance_criteria": [
+        "/mystats показывает: кол-во поисков, активные подписки, сколько раз сработал алёрт",
+        "Показывает самый дешёвый найденный билет за всё время",
+        "Данные персонализированы по chat_id"
+      ],
+      "test_steps": [
+        "Выполнить несколько поисков, затем /mystats — статистика должна отражать активность"
+      ],
+      "dependencies": [
+        "TASK-034"
+      ]
     }
   ]
 }
