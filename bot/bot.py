@@ -25,6 +25,7 @@ from telegram import (
     InlineKeyboardMarkup,
     ReplyKeyboardMarkup,
     Update,
+    WebAppInfo,
 )
 from telegram.constants import ParseMode
 from telegram.ext import (
@@ -37,14 +38,15 @@ from telegram.ext import (
 )
 
 from db import get_conn
-from bot.airports import route_label, parse_route_input
+from bot.airports import route_label, parse_route_input, search_cities
 
 load_dotenv()
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
 
-_API_URL = "https://api.travelpayouts.com/aviasales/v3/prices_for_dates"
-_TP_TOKEN = os.getenv("TRAVELPAYOUTS_TOKEN", "")
+_API_URL    = "https://api.travelpayouts.com/aviasales/v3/prices_for_dates"
+_TP_TOKEN   = os.getenv("TRAVELPAYOUTS_TOKEN", "")
+_MINIAPP_URL = os.getenv("MINIAPP_URL", "")  # https://your-domain/  (пусто = кнопка скрыта)
 
 # callback_data prefixes (kept short — Telegram limit 64 bytes)
 _CB_PAX     = "pax"   # pax:{adults}
@@ -57,6 +59,7 @@ _CB_ONEWAY  = "ow"    # ow:{rid}:{org}:{dst}:{adt}:{from_date}
 _CB_WATCH     = "watch"    # watch:{route_id}:{origin}:{dest}:{price_int}
 _CB_UNWATCH   = "unwatch"  # unwatch:{sub_id}
 _CB_CHEAPEST  = "cheap"    # cheap:{route_id}:{origin}:{dest}:{adults}:{year}:{month}
+_CB_CITY_PICK = "cp"       # cp:{adults}:{step}:{iata}  — выбор города из подсказок
 
 _MENU_SEARCH  = "🔍 Поиск"
 _MENU_HISTORY = "📊 История цен"
@@ -81,8 +84,9 @@ _MONTHS_SHORT = {
 
 _SPARKLINE_CHARS = "▁▂▃▄▅▆▇█"
 
-# user_data key for free-form route input state
-_STATE_AWAITING_ROUTE = "awaiting_route"
+# user_data keys
+_STATE_AWAITING_ROUTE  = "awaiting_route"   # {"adults": int}
+_STATE_AWAITING_DEST   = "awaiting_dest"    # {"adults": int, "origin": str} — origin выбран, ждём dest
 
 
 # ---------------------------------------------------------------------------
@@ -399,6 +403,19 @@ def _format_history(data: dict, label: str) -> str:
     return "\n".join(lines)
 
 
+def _result_keyboard(rid: str, org: str, dst: str, best_price: int) -> InlineKeyboardMarkup:
+    """Клавиатура под результатами поиска: «Следить» и опционально «График»."""
+    watch_btn = InlineKeyboardButton(
+        f"🔔 Следить ({best_price:,}₽)",
+        callback_data=f"{_CB_WATCH}:{rid}:{org}:{dst}:{best_price}",
+    )
+    rows = [[watch_btn]]
+    if _MINIAPP_URL:
+        url = _MINIAPP_URL.rstrip("/") + f"/?origin={org}&dest={dst}"
+        rows.append([InlineKeyboardButton("📊 График цен", web_app=WebAppInfo(url=url))])
+    return InlineKeyboardMarkup(rows)
+
+
 def _progress_bar(step: int, total: int = 5) -> str:
     filled = int(step / total * 10)
     return "█" * filled + "░" * (10 - filled)
@@ -514,37 +531,103 @@ async def handle_menu_button(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await cmd_help(update, context)
 
 
+def _city_suggest_keyboard(query: str, adults: str, step: str) -> InlineKeyboardMarkup | None:
+    """Построить клавиатуру с подсказками городов по частичному вводу."""
+    suggestions = search_cities(query)
+    if not suggestions:
+        return None
+    buttons = [
+        [InlineKeyboardButton(f"{name} ({iata})", callback_data=f"{_CB_CITY_PICK}:{adults}:{step}:{iata}")]
+        for iata, name in suggestions
+    ]
+    return InlineKeyboardMarkup(buttons)
+
+
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle free-form route input: IATA codes or city names, e.g. 'HAN BKK' or 'Ханой Бангкок'."""
+    """Handle free-form route input with city suggestions."""
+    text = update.message.text.strip()
+
+    # Шаг 2: ждём город назначения
+    dest_state = context.user_data.get(_STATE_AWAITING_DEST)
+    if dest_state:
+        from bot.airports import resolve_city
+        dest = resolve_city(text)
+        if dest:
+            origin = dest_state["origin"]
+            adults = str(dest_state["adults"])
+            context.user_data.pop(_STATE_AWAITING_DEST, None)
+            await _open_calendar_for_route(update.message, origin, dest, adults)
+        else:
+            kb = _city_suggest_keyboard(text, str(dest_state["adults"]), "dest")
+            if kb:
+                await update.message.reply_text(
+                    f"Куда летим? Выберите или уточните:",
+                    reply_markup=kb,
+                )
+            else:
+                await update.message.reply_text(
+                    "Не распознал город назначения. Попробуйте ещё раз:\n"
+                    "<code>BKK</code>  или  <code>Бангкок</code>",
+                    parse_mode=ParseMode.HTML,
+                )
+        return
+
+    # Шаг 1: ждём маршрут (оба города сразу или только первый)
     state = context.user_data.get(_STATE_AWAITING_ROUTE)
     if not state:
         return
 
-    parsed = parse_route_input(update.message.text)
-    if not parsed:
+    adults = str(state["adults"])
+
+    # Попробовать распознать сразу два города
+    parsed = parse_route_input(text)
+    if parsed:
+        origin, dest = parsed
+        context.user_data.pop(_STATE_AWAITING_ROUTE, None)
+        await _open_calendar_for_route(update.message, origin, dest, adults)
+        return
+
+    # Один токен — возможно пользователь вводит только город отправления
+    parts = text.split()
+    if len(parts) == 1:
+        from bot.airports import resolve_city
+        origin = resolve_city(text)
+        if origin:
+            context.user_data.pop(_STATE_AWAITING_ROUTE, None)
+            context.user_data[_STATE_AWAITING_DEST] = {"adults": state["adults"], "origin": origin}
+            kb = _city_suggest_keyboard("", adults, "dest")
+            await update.message.reply_text(
+                f"Откуда: <b>{route_label(origin, '???').split(' →')[0]}</b>\n\nТеперь введите город назначения:",
+                parse_mode=ParseMode.HTML,
+            )
+            return
+
+    # Не распознали — показать подсказки если есть совпадения
+    kb = _city_suggest_keyboard(text, adults, "origin")
+    if kb:
+        await update.message.reply_text("Уточните город отправления:", reply_markup=kb)
+    else:
         await update.message.reply_text(
             "Не удалось распознать маршрут.\n\n"
             "Введите два города через пробел:\n"
             "<code>HAN BKK</code>  или  <code>Ханой Бангкок</code>  или  <code>Hanoi Bangkok</code>",
             parse_mode=ParseMode.HTML,
         )
-        return
 
-    origin, dest = parsed
-    adults = str(state["adults"])
-    context.user_data.pop(_STATE_AWAITING_ROUTE, None)
 
+async def _open_calendar_for_route(message, origin: str, dest: str, adults: str) -> None:
+    """Создать маршрут в БД и открыть календарь."""
     try:
         route_id = str(_ensure_route(origin, dest))
     except Exception:
         logger.exception("Failed to ensure route %s→%s", origin, dest)
-        await update.message.reply_text("Не удалось создать маршрут.")
+        await message.reply_text("Не удалось создать маршрут.")
         return
 
     label = route_label(origin, dest)
     y, m = _first_available_month()
     kb = _build_calendar(y, m, "f", route_id, origin, dest, adults)
-    await update.message.reply_text(
+    await message.reply_text(
         f"<b>{label}</b>  —  выберите дату вылета (от):",
         reply_markup=kb, parse_mode=ParseMode.HTML,
     )
@@ -661,14 +744,52 @@ async def cb_cal_day(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
         text, best_price = _format_results(filtered, org, dst, adults, label)
 
-        keyboard = None
-        if best_price is not None:
-            cb = f"{_CB_WATCH}:{rid}:{org}:{dst}:{best_price}"
-            keyboard = InlineKeyboardMarkup([[InlineKeyboardButton(f"🔔 Следить ({best_price:,}₽)", callback_data=cb)]])
-
+        keyboard = _result_keyboard(rid, org, dst, best_price) if best_price is not None else None
         await query.edit_message_text(
             text, parse_mode=ParseMode.HTML, disable_web_page_preview=True,
             reply_markup=keyboard,
+        )
+
+
+async def cb_city_pick(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """User picked a city suggestion button."""
+    query = update.callback_query
+    await query.answer()
+
+    # cp:{adults}:{step}:{iata}
+    _, adults, step, iata = query.data.split(":")
+
+    if step == "origin":
+        # Выбрали город отправления — ждём назначение
+        context.user_data.pop(_STATE_AWAITING_ROUTE, None)
+        context.user_data[_STATE_AWAITING_DEST] = {"adults": int(adults), "origin": iata}
+        city_name = route_label(iata, "???").split(" →")[0]
+        await query.edit_message_text(
+            f"Откуда: <b>{city_name}</b>\n\nТеперь введите город назначения:",
+            parse_mode=ParseMode.HTML,
+        )
+    else:
+        # Выбрали город назначения
+        dest_state = context.user_data.get(_STATE_AWAITING_DEST)
+        if not dest_state:
+            await query.edit_message_text("Сессия устарела, начните поиск заново.")
+            return
+        origin = dest_state["origin"]
+        context.user_data.pop(_STATE_AWAITING_DEST, None)
+
+        try:
+            route_id = str(_ensure_route(origin, iata))
+        except Exception:
+            logger.exception("Failed to ensure route %s→%s", origin, iata)
+            await query.edit_message_text("Не удалось создать маршрут.")
+            return
+
+        label = route_label(origin, iata)
+        y, m = _first_available_month()
+        kb = _build_calendar(y, m, "f", route_id, origin, iata, adults)
+        await query.edit_message_text(
+            f"<b>{label}</b>  —  выберите дату вылета (от):",
+            reply_markup=kb, parse_mode=ParseMode.HTML,
         )
 
 
@@ -720,10 +841,8 @@ async def cb_cheapest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     best_price = top3[0]["price"]
     lines.append(f"\nЛучшая цена в месяце: <b>{best_price:,}₽</b>/чел")
 
-    keyboard_rows = []
-    cb_watch = f"{_CB_WATCH}:{rid}:{org}:{dst}:{best_price}"
-    keyboard_rows.append([InlineKeyboardButton(f"🔔 Следить ({best_price:,}₽)", callback_data=cb_watch)])
-    # allow switching to another month
+    keyboard_rows = list(_result_keyboard(rid, org, dst, int(best_price)).inline_keyboard)
+    # кнопка переключения на следующий месяц
     if month < 12:
         next_y, next_m = year, month + 1
     else:
@@ -762,11 +881,7 @@ async def cb_oneway(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     text, best_price = _format_results(items, org, dst, adults, label)
 
-    keyboard = None
-    if best_price is not None:
-        cb = f"{_CB_WATCH}:{rid}:{org}:{dst}:{best_price}"
-        keyboard = InlineKeyboardMarkup([[InlineKeyboardButton(f"🔔 Следить ({best_price:,}₽)", callback_data=cb)]])
-
+    keyboard = _result_keyboard(rid, org, dst, best_price) if best_price is not None else None
     await query.edit_message_text(
         text, parse_mode=ParseMode.HTML, disable_web_page_preview=True,
         reply_markup=keyboard,
@@ -799,8 +914,7 @@ async def cb_hist(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     daily = data.get("daily", [])
     if daily:
         current_price = int(daily[-1]["price"])
-        cb = f"{_CB_WATCH}:{route_id}:{origin}:{dest}:{current_price}"
-        keyboard = InlineKeyboardMarkup([[InlineKeyboardButton(f"🔔 Следить ({current_price:,}₽)", callback_data=cb)]])
+        keyboard = _result_keyboard(route_id, origin, dest, current_price)
 
     await query.edit_message_text(text, parse_mode=ParseMode.HTML, reply_markup=keyboard)
 
@@ -877,7 +991,8 @@ def main() -> None:
     app.add_handler(CallbackQueryHandler(cb_route,        pattern=rf"^{_CB_ROUTE}:"))
     app.add_handler(CallbackQueryHandler(cb_cal_nav,      pattern=rf"^{_CB_CAL_NAV}:"))
     app.add_handler(CallbackQueryHandler(cb_cal_day,      pattern=rf"^{_CB_CAL_DAY}:"))
-    app.add_handler(CallbackQueryHandler(cb_cheapest,     pattern=rf"^{_CB_CHEAPEST}:"))
+    app.add_handler(CallbackQueryHandler(cb_city_pick,     pattern=rf"^{_CB_CITY_PICK}:"))
+    app.add_handler(CallbackQueryHandler(cb_cheapest,      pattern=rf"^{_CB_CHEAPEST}:"))
     app.add_handler(CallbackQueryHandler(cb_oneway,       pattern=rf"^{_CB_ONEWAY}:"))
     app.add_handler(CallbackQueryHandler(cb_hist,         pattern=rf"^{_CB_HIST}:"))
     app.add_handler(CallbackQueryHandler(cb_watch,        pattern=rf"^{_CB_WATCH}:"))

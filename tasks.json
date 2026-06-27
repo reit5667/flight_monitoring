@@ -871,7 +871,7 @@
       "id": "TASK-037",
       "category": "bot",
       "priority": "medium",
-      "status": "pending",
+      "status": "done",
       "description": "Telegram Bot: inline-автодополнение города при вводе маршрута",
       "acceptance_criteria": [
         "При вводе от 3 символов ('Хан', 'Ban') бот показывает inline-кнопки с вариантами",

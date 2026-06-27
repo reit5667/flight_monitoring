@@ -424,3 +424,23 @@ def parse_route_input(text: str) -> tuple[str, str] | None:
                 return origin, dest
 
     return None
+
+
+def search_cities(query: str, limit: int = 5) -> list[tuple[str, str]]:
+    """
+    Найти города по частичному вводу (≥2 символа).
+    Возвращает список (iata, русское_название), уникальных, отсортированных по названию.
+    """
+    q = query.strip().lower()
+    if len(q) < 2:
+        return []
+
+    seen: set[str] = set()
+    results: list[tuple[str, str]] = []
+    for alias, iata in _CITY_ALIASES.items():
+        if alias.startswith(q) and iata not in seen:
+            seen.add(iata)
+            results.append((iata, AIRPORT_NAMES.get(iata, iata)))
+
+    results.sort(key=lambda x: x[1])
+    return results[:limit]

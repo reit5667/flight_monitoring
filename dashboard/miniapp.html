@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>История цен</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: var(--tg-theme-bg-color, #fff);
+      color: var(--tg-theme-text-color, #222);
+      padding: 16px;
+      min-height: 100vh;
+    }
+    h1 { font-size: 18px; font-weight: 600; margin-bottom: 4px; }
+    .subtitle { font-size: 13px; color: var(--tg-theme-hint-color, #888); margin-bottom: 20px; }
+    .chart-wrap { position: relative; width: 100%; height: 260px; }
+    .stats { display: flex; gap: 12px; margin-top: 20px; }
+    .stat {
+      flex: 1;
+      background: var(--tg-theme-secondary-bg-color, #f5f5f5);
+      border-radius: 12px;
+      padding: 12px;
+      text-align: center;
+    }
+    .stat-value { font-size: 20px; font-weight: 700; color: var(--tg-theme-link-color, #2481cc); }
+    .stat-label { font-size: 12px; color: var(--tg-theme-hint-color, #888); margin-top: 2px; }
+    .empty {
+      text-align: center;
+      color: var(--tg-theme-hint-color, #888);
+      margin-top: 60px;
+      font-size: 15px;
+    }
+    .route-select {
+      width: 100%;
+      padding: 10px 12px;
+      border-radius: 10px;
+      border: 1px solid var(--tg-theme-hint-color, #ccc);
+      background: var(--tg-theme-secondary-bg-color, #f5f5f5);
+      color: var(--tg-theme-text-color, #222);
+      font-size: 15px;
+      margin-bottom: 20px;
+      appearance: none;
+    }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <h1 id="title">История цен</h1>
+    <p class="subtitle" id="subtitle">Загрузка…</p>
+    <select class="route-select" id="routeSelect" style="display:none"></select>
+    <div class="chart-wrap">
+      <canvas id="chart"></canvas>
+    </div>
+    <div class="stats" id="stats" style="display:none">
+      <div class="stat">
+        <div class="stat-value" id="statMin">—</div>
+        <div class="stat-label">мин. цена</div>
+      </div>
+      <div class="stat">
+        <div class="stat-value" id="statAvg">—</div>
+        <div class="stat-label">средняя</div>
+      </div>
+      <div class="stat">
+        <div class="stat-value" id="statLast">—</div>
+        <div class="stat-label">последняя</div>
+      </div>
+    </div>
+    <div class="empty" id="empty" style="display:none">Данных пока нет.<br>Запустите мониторинг маршрута.</div>
+  </div>
+
+  <script>
+    const tg = window.Telegram?.WebApp;
+    if (tg) { tg.ready(); tg.expand(); }
+
+    // Параметры из URL (?origin=HAN&dest=BKK) или из initData бота
+    const params = new URLSearchParams(window.location.search);
+    let origin = params.get("origin") || "";
+    let dest   = params.get("dest")   || "";
+
+    // Если переданы через startParam бота: "HAN_BKK"
+    const startParam = tg?.initDataUnsafe?.start_param || "";
+    if (startParam && !origin) {
+      const parts = startParam.split("_");
+      if (parts.length === 2) { origin = parts[0]; dest = parts[1]; }
+    }
+
+    let chartInstance = null;
+
+    async function loadRoutes() {
+      const res = await fetch("/api/routes");
+      return res.ok ? res.json() : [];
+    }
+
+    async function loadHistory(org, dst) {
+      const res = await fetch(`/api/history?origin=${org}&dest=${dst}&days=30`);
+      return res.ok ? res.json() : [];
+    }
+
+    function fmt(price) {
+      return price ? price.toLocaleString("ru-RU") + " ₽" : "—";
+    }
+
+    function renderChart(data, label) {
+      const labels = data.map(d => {
+        const dt = new Date(d.date);
+        return dt.toLocaleDateString("ru-RU", { day: "numeric", month: "short" });
+      });
+      const prices = data.map(d => d.price);
+
+      if (chartInstance) chartInstance.destroy();
+
+      const isDark = tg?.colorScheme === "dark";
+      const gridColor  = isDark ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.06)";
+      const lineColor  = tg?.themeParams?.link_color || "#2481cc";
+      const textColor  = tg?.themeParams?.text_color || "#222";
+
+      chartInstance = new Chart(document.getElementById("chart"), {
+        type: "line",
+        data: {
+          labels,
+          datasets: [{
+            label,
+            data: prices,
+            borderColor: lineColor,
+            backgroundColor: lineColor + "22",
+            fill: true,
+            tension: 0.3,
+            pointRadius: data.length <= 10 ? 4 : 2,
+            pointHoverRadius: 6,
+          }],
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: { display: false },
+            tooltip: {
+              callbacks: {
+                label: ctx => fmt(ctx.parsed.y),
+              },
+            },
+          },
+          scales: {
+            x: {
+              ticks: { color: textColor, maxTicksLimit: 7, font: { size: 11 } },
+              grid: { color: gridColor },
+            },
+            y: {
+              ticks: {
+                color: textColor,
+                font: { size: 11 },
+                callback: v => v.toLocaleString("ru-RU") + " ₽",
+              },
+              grid: { color: gridColor },
+            },
+          },
+        },
+      });
+    }
+
+    function showStats(data) {
+      if (!data.length) return;
+      const prices = data.map(d => d.price);
+      document.getElementById("statMin").textContent  = fmt(Math.min(...prices));
+      document.getElementById("statAvg").textContent  = fmt(Math.round(prices.reduce((a, b) => a + b, 0) / prices.length));
+      document.getElementById("statLast").textContent = fmt(prices[prices.length - 1]);
+      document.getElementById("stats").style.display  = "flex";
+    }
+
+    async function showRoute(org, dst, label) {
+      document.getElementById("subtitle").textContent = "Загрузка данных…";
+      document.getElementById("empty").style.display = "none";
+
+      const data = await loadHistory(org, dst);
+      document.getElementById("title").textContent = label || `${org} → ${dst}`;
+      if (!data.length) {
+        document.getElementById("subtitle").textContent = "Нет данных за 30 дней";
+        document.getElementById("empty").style.display = "block";
+        if (chartInstance) { chartInstance.destroy(); chartInstance = null; }
+        document.getElementById("stats").style.display = "none";
+        return;
+      }
+      document.getElementById("subtitle").textContent = `Минимальная цена за 30 дней`;
+      renderChart(data, label);
+      showStats(data);
+    }
+
+    async function init() {
+      const routes = await loadRoutes();
+
+      if (routes.length > 1) {
+        const sel = document.getElementById("routeSelect");
+        sel.style.display = "block";
+        routes.forEach(r => {
+          const opt = document.createElement("option");
+          opt.value = `${r.origin}|${r.dest}`;
+          opt.textContent = r.label;
+          if (r.origin === origin && r.dest === dest) opt.selected = true;
+          sel.appendChild(opt);
+        });
+        sel.addEventListener("change", () => {
+          const [org, dst] = sel.value.split("|");
+          const label = sel.options[sel.selectedIndex].textContent;
+          showRoute(org, dst, label);
+        });
+
+        // Если маршрут не передан — берём первый
+        if (!origin && routes.length) {
+          origin = routes[0].origin;
+          dest   = routes[0].dest;
+        }
+        const selected = routes.find(r => r.origin === origin && r.dest === dest) || routes[0];
+        showRoute(selected.origin, selected.dest, selected.label);
+      } else if (origin && dest) {
+        const label = routes.find(r => r.origin === origin && r.dest === dest)?.label || `${origin} → ${dest}`;
+        showRoute(origin, dest, label);
+      } else {
+        document.getElementById("subtitle").textContent = "Маршрут не выбран";
+        document.getElementById("empty").style.display = "block";
+      }
+    }
+
+    init();
+  </script>
+</body>
+</html>
