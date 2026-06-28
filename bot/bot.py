@@ -48,6 +48,62 @@ _API_URL    = "https://api.travelpayouts.com/aviasales/v3/prices_for_dates"
 _TP_TOKEN   = os.getenv("TRAVELPAYOUTS_TOKEN", "")
 _MINIAPP_URL = os.getenv("MINIAPP_URL", "")  # https://your-domain/  (пусто = кнопка скрыта)
 
+# Аэропорты Шенгенской зоны — используются для фильтрации транзитных пересадок
+_SCHENGEN_AIRPORTS: frozenset[str] = frozenset({
+    # Австрия
+    "VIE", "GRZ", "LNZ", "SZG",
+    # Бельгия
+    "BRU", "CRL", "LGG",
+    # Чехия
+    "PRG", "BRQ", "OSR",
+    # Дания
+    "CPH", "AAL", "AAR",
+    # Эстония
+    "TLL",
+    # Финляндия
+    "HEL", "TMP", "TKU", "OUL",
+    # Франция
+    "CDG", "ORY", "NCE", "LYS", "MRS", "BOD", "TLS", "NTE", "SXB",
+    # Германия
+    "FRA", "MUC", "BER", "HAM", "DUS", "STR", "CGN", "NUE", "LEJ", "HAJ",
+    # Греция
+    "ATH", "SKG", "HER", "RHO", "CFU", "KGS", "ZTH", "CHQ",
+    # Венгрия
+    "BUD", "DEB",
+    # Исландия
+    "KEF",
+    # Италия
+    "FCO", "MIL", "MXP", "LIN", "BGY", "VCE", "NAP", "BLQ", "CTA", "PSA", "PMO", "BRI", "CAG",
+    # Латвия
+    "RIX",
+    # Литва
+    "VNO", "KUN",
+    # Люксембург
+    "LUX",
+    # Мальта
+    "MLA",
+    # Нидерланды
+    "AMS", "EIN", "RTM",
+    # Норвегия
+    "OSL", "BGO", "TRD", "SVG",
+    # Польша
+    "WAW", "KRK", "KTW", "GDN", "POZ", "WRO",
+    # Португалия
+    "LIS", "OPO", "FAO",
+    # Словакия
+    "BTS", "KSC",
+    # Словения
+    "LJU",
+    # Испания
+    "MAD", "BCN", "AGP", "PMI", "ALC", "VLC", "IBZ", "SVQ", "BIO", "TFS", "LPA",
+    # Швеция
+    "ARN", "GOT", "MMX",
+    # Швейцария
+    "ZRH", "GVA", "BSL",
+    # Румыния (в Шенгене с марта 2024 для авиа)
+    "OTP", "CLJ", "TSR",
+})
+
 # callback_data prefixes (kept short — Telegram limit 64 bytes)
 _CB_PAX     = "pax"   # pax:{adults}
 _CB_ROUTE   = "route" # route:{route_id}:{origin}:{dest}:{date_from}:{date_to}:{adults}
@@ -60,6 +116,9 @@ _CB_WATCH     = "watch"    # watch:{route_id}:{origin}:{dest}:{price_int}
 _CB_UNWATCH   = "unwatch"  # unwatch:{sub_id}
 _CB_CHEAPEST  = "cheap"    # cheap:{route_id}:{origin}:{dest}:{adults}:{year}:{month}
 _CB_CITY_PICK = "cp"       # cp:{adults}:{step}:{iata}  — выбор города из подсказок
+_CB_DEL_ROUTE = "dr"       # dr:{route_id}  — удалить маршрут из БД
+_CB_DEL_CONF  = "drc"      # drc:{route_id} — подтверждение удаления
+_CB_VF_TOGGLE = "vft"      # vft:{visa_free}  — переключатель фильтра visa_free на экране пассажиров
 
 _MENU_SEARCH  = "🔍 Поиск"
 _MENU_HISTORY = "📊 История цен"
@@ -155,7 +214,7 @@ def _build_calendar(
 # DB helpers
 # ---------------------------------------------------------------------------
 
-def _load_enabled_routes() -> list[dict]:
+def _load_enabled_routes(visa_free_only: bool = True) -> list[dict]:
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -163,8 +222,10 @@ def _load_enabled_routes() -> list[dict]:
                 SELECT route_id, origin, destination, date_from, date_to, notes
                 FROM routes
                 WHERE enabled = true
+                  AND (NOT %(visa_free_only)s OR visa_free = true)
                 ORDER BY priority DESC, route_id
-                """
+                """,
+                {"visa_free_only": visa_free_only},
             )
             rows = cur.fetchall()
     cols = ["route_id", "origin", "destination", "date_from", "date_to", "notes"]
@@ -284,6 +345,49 @@ def _deactivate_subscription(sub_id: int, chat_id: int) -> bool:
     return affected > 0
 
 
+def _load_user_stats(chat_id: int) -> dict:
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            # Всего подписок (включая неактивные) и активных
+            cur.execute(
+                """
+                SELECT
+                    COUNT(*) FILTER (WHERE is_active)        AS active_subs,
+                    COUNT(*)                                   AS total_subs,
+                    MIN(created_at)                            AS first_sub_at
+                FROM subscriptions WHERE chat_id = %s
+                """,
+                (chat_id,),
+            )
+            row = cur.fetchone()
+            active_subs, total_subs, first_sub_at = row
+
+            # Лучшая (минимальная) цена которую бот нашёл для маршрутов пользователя
+            cur.execute(
+                """
+                SELECT s.origin, s.dest, MIN(fh.price::numeric) AS min_price
+                FROM subscriptions s
+                JOIN routes r ON r.route_id = s.route_id
+                JOIN flights_history fh ON fh.route_id = s.route_id
+                WHERE s.chat_id = %s
+                GROUP BY s.origin, s.dest
+                ORDER BY min_price
+                LIMIT 1
+                """,
+                (chat_id,),
+            )
+            best = cur.fetchone()
+
+    return {
+        "active_subs": int(active_subs or 0),
+        "total_subs": int(total_subs or 0),
+        "first_sub_at": first_sub_at,
+        "best_origin": best[0] if best else None,
+        "best_dest": best[1] if best else None,
+        "best_price": float(best[2]) if best else None,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Travelpayouts search
 # ---------------------------------------------------------------------------
@@ -316,7 +420,29 @@ def _filter_by_dates(items: list[dict], d_from: date, d_to: date) -> list[dict]:
     return result
 
 
-def _aviasales_url(origin: str, dest: str, dep_date: date, adults: int) -> str:
+def _has_schengen_transit(item: dict) -> bool:
+    """Проверяет, есть ли в маршруте пересадка в Шенгенской зоне.
+
+    Аэропорты маршрута закодированы в параметре t= ссылки в виде SGNPEKWAWBGYBEG.
+    """
+    link = item.get("link", "")
+    # Извлекаем строку аэропортов из параметра t= (формат: ...1505SGNPEKWAWBGYBEG_...)
+    import re
+    m = re.search(r"[A-Z]{3}(?:[A-Z]{3})+", link)
+    if not m:
+        return False
+    route_str = m.group()
+    # Все аэропорты кроме первого и последнего — транзитные
+    airports = [route_str[i:i+3] for i in range(0, len(route_str), 3)]
+    transit = airports[1:-1]
+    return any(a in _SCHENGEN_AIRPORTS for a in transit)
+
+
+def _aviasales_url(origin: str, dest: str, dep_date: date, adults: int, link: str | None = None) -> str:
+    if link:
+        base = link if link.startswith("http") else f"https://www.aviasales.ru{link}"
+        # Заменяем число пассажиров в пути если оно там зашито (обычно /search/SGN1007BEG1)
+        return base
     return f"https://www.aviasales.ru/search/{origin}{dep_date.strftime('%d%m')}{dest}{adults}"
 
 
@@ -327,7 +453,9 @@ def _fmt_duration(minutes: int) -> str:
     return f"{h}ч{m:02d}м"
 
 
-def _format_results(items: list[dict], origin: str, dest: str, adults: int, label: str) -> tuple[str, int | None]:
+def _format_results(items: list[dict], origin: str, dest: str, adults: int, label: str, visa_free: bool = True) -> tuple[str, int | None]:
+    if visa_free:
+        items = [it for it in items if not _has_schengen_transit(it)]
     if not items:
         return f"По маршруту <b>{label}</b> ничего не найдено.", None
 
@@ -339,7 +467,7 @@ def _format_results(items: list[dict], origin: str, dest: str, adults: int, labe
         airline = item.get("airline", "?")
         duration = item.get("duration_to") or item.get("duration") or 0
         stops_str = "прямой" if stops == 0 else f"{stops} пер."
-        url = _aviasales_url(origin, dest, dep.date(), adults)
+        url = _aviasales_url(origin, dest, dep.date(), adults, item.get("link"))
         lines.append(
             f"{i}. {dep.strftime('%d.%m %H:%M')}  {_fmt_duration(duration)}  {stops_str}  [{airline}]\n"
             f"   {price:,}₽/чел"
@@ -349,7 +477,7 @@ def _format_results(items: list[dict], origin: str, dest: str, adults: int, labe
 
     best = items[0]
     best_price = best["price"]
-    best_url = _aviasales_url(origin, dest, datetime.fromisoformat(best["departure_at"]).date(), adults)
+    best_url = _aviasales_url(origin, dest, datetime.fromisoformat(best["departure_at"]).date(), adults, best.get("link"))
     lines.append(f"\nЛучшая цена: <b>{best_price:,}₽</b>/чел · <a href=\"{best_url}\">открыть</a>")
     return "\n".join(lines), best_price
 
@@ -469,18 +597,34 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     )
 
 
-async def _show_pax_selection(update: Update) -> None:
-    buttons = [[
-        InlineKeyboardButton("1 чел.", callback_data=f"{_CB_PAX}:1"),
-        InlineKeyboardButton("2 чел.", callback_data=f"{_CB_PAX}:2"),
-        InlineKeyboardButton("3 чел.", callback_data=f"{_CB_PAX}:3"),
-        InlineKeyboardButton("4 чел.", callback_data=f"{_CB_PAX}:4"),
-    ]]
-    await update.message.reply_text("Сколько пассажиров?", reply_markup=InlineKeyboardMarkup(buttons))
+def _pax_keyboard(visa_free: bool) -> InlineKeyboardMarkup:
+    toggle_label = "✈️ Без визы: вкл" if visa_free else "🌍 Без визы: выкл"
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("1 чел.", callback_data=f"{_CB_PAX}:1:{int(visa_free)}"),
+            InlineKeyboardButton("2 чел.", callback_data=f"{_CB_PAX}:2:{int(visa_free)}"),
+            InlineKeyboardButton("3 чел.", callback_data=f"{_CB_PAX}:3:{int(visa_free)}"),
+            InlineKeyboardButton("4 чел.", callback_data=f"{_CB_PAX}:4:{int(visa_free)}"),
+        ],
+        [InlineKeyboardButton(toggle_label, callback_data=f"{_CB_VF_TOGGLE}:{int(not visa_free)}")],
+    ])
+
+
+async def _show_pax_selection(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    visa_free = context.user_data.get("visa_free_pref", True)
+    await update.message.reply_text("Сколько пассажиров?", reply_markup=_pax_keyboard(visa_free))
 
 
 async def cmd_search(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await _show_pax_selection(update)
+    await _show_pax_selection(update, context)
+
+
+async def cmd_clear(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await update.message.delete()
+    await update.message.chat.send_message(
+        "🧹 Чат очищен.\n\nДля нового поиска нажмите кнопку ниже.",
+        reply_markup=_MAIN_KEYBOARD,
+    )
 
 
 async def _show_history_routes(update: Update) -> None:
@@ -521,10 +665,124 @@ async def cmd_unwatch(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     await update.message.reply_text("Ваши подписки. Нажмите ❌ чтобы отменить:", reply_markup=InlineKeyboardMarkup(buttons))
 
 
+async def cmd_delroute(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT route_id, origin, destination, notes FROM routes ORDER BY route_id")
+                rows = cur.fetchall()
+    except Exception:
+        await update.message.reply_text("Не удалось загрузить маршруты.")
+        return
+    if not rows:
+        await update.message.reply_text("Маршрутов в базе нет.")
+        return
+    buttons = []
+    for route_id, origin, dest, notes in rows:
+        label = notes or route_label(origin, dest)
+        buttons.append([InlineKeyboardButton(f"🗑 {label}", callback_data=f"{_CB_DEL_ROUTE}:{route_id}")])
+    await update.message.reply_text("Выберите маршрут для удаления:", reply_markup=InlineKeyboardMarkup(buttons))
+
+
+async def cb_del_route(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+    route_id = int(query.data.split(":")[1])
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT origin, destination, notes FROM routes WHERE route_id = %s", (route_id,))
+                row = cur.fetchone()
+    except Exception:
+        await query.edit_message_text("Ошибка при загрузке маршрута.")
+        return
+    if not row:
+        await query.edit_message_text("Маршрут не найден.")
+        return
+    origin, dest, notes = row
+    label = notes or route_label(origin, dest)
+    buttons = [[
+        InlineKeyboardButton("✅ Да, удалить", callback_data=f"{_CB_DEL_CONF}:{route_id}"),
+        InlineKeyboardButton("❌ Отмена", callback_data="noop"),
+    ]]
+    await query.edit_message_text(
+        f"Удалить маршрут <b>{label}</b>?\nВсе подписки и история цен тоже удалятся.",
+        reply_markup=InlineKeyboardMarkup(buttons),
+        parse_mode=ParseMode.HTML,
+    )
+
+
+async def cb_del_route_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+    route_id = int(query.data.split(":")[1])
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT origin, destination, notes FROM routes WHERE route_id = %s", (route_id,))
+                row = cur.fetchone()
+                if not row:
+                    await query.edit_message_text("Маршрут не найден.")
+                    return
+                origin, dest, notes = row
+                cur.execute("DELETE FROM routes WHERE route_id = %s", (route_id,))
+            conn.commit()
+    except Exception:
+        logger.exception("Failed to delete route %s", route_id)
+        await query.edit_message_text("Ошибка при удалении.")
+        return
+    label = notes or route_label(origin, dest)
+    last = context.user_data.get("last_route_list", {})
+    adults = last.get("adults", "1")
+    visa_free = last.get("visa_free", True)
+    try:
+        routes = _load_enabled_routes(visa_free_only=visa_free)
+    except Exception:
+        await query.edit_message_text(f"Маршрут <b>{label}</b> удалён.", parse_mode=ParseMode.HTML)
+        return
+    visa_label = "без визы" if visa_free else "все маршруты"
+    await query.edit_message_text(
+        f"Маршрут <b>{label}</b> удалён.\n\nВыберите маршрут ({adults} взр., {visa_label}):",
+        reply_markup=_build_route_list_keyboard(routes, adults),
+        parse_mode=ParseMode.HTML,
+    )
+
+
+async def cmd_mystats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    chat_id = update.effective_user.id
+    try:
+        stats = _load_user_stats(chat_id)
+    except Exception:
+        logger.exception("Failed to load stats for chat_id=%s", chat_id)
+        await update.message.reply_text("Не удалось загрузить статистику.")
+        return
+
+    if stats["total_subs"] == 0:
+        await update.message.reply_text(
+            "Статистики пока нет.\n\nНачните с /search — найдите маршрут и нажмите «🔔 Следить»."
+        )
+        return
+
+    lines = ["<b>📈 Ваша статистика</b>\n"]
+
+    lines.append(f"Активных подписок: <b>{stats['active_subs']}</b>")
+    if stats["total_subs"] > stats["active_subs"]:
+        lines.append(f"Всего подписок за всё время: {stats['total_subs']}")
+
+    if stats["first_sub_at"]:
+        lines.append(f"Первая подписка: {stats['first_sub_at'].strftime('%d.%m.%Y')}")
+
+    if stats["best_price"] is not None:
+        label = route_label(stats["best_origin"], stats["best_dest"])
+        lines.append(f"\nЛучшая найденная цена:\n<b>{stats['best_price']:,.0f}₽</b> — {label}")
+
+    await update.message.reply_text("\n".join(lines), parse_mode=ParseMode.HTML)
+
+
 async def handle_menu_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     text = update.message.text
     if text == _MENU_SEARCH:
-        await _show_pax_selection(update)
+        await _show_pax_selection(update, context)
     elif text == _MENU_HISTORY:
         await _show_history_routes(update)
     elif text == _MENU_HELP:
@@ -637,26 +895,46 @@ async def _open_calendar_for_route(message, origin: str, dest: str, adults: str)
 # Callback handlers
 # ---------------------------------------------------------------------------
 
-async def cb_pax(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def cb_vf_toggle(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
-    adults = query.data.split(":")[1]
+    visa_free = bool(int(query.data.split(":")[1]))
+    context.user_data["visa_free_pref"] = visa_free
+    await query.edit_message_text("Сколько пассажиров?", reply_markup=_pax_keyboard(visa_free))
 
-    try:
-        routes = _load_enabled_routes()
-    except Exception:
-        await query.edit_message_text("Не удалось загрузить маршруты.")
-        return
 
+def _build_route_list_keyboard(routes: list[dict], adults: str) -> InlineKeyboardMarkup:
     buttons = []
     for r in routes:
         label = r["notes"] or route_label(r['origin'], r['destination'])
         cb = f"{_CB_ROUTE}:{r['route_id']}:{r['origin']}:{r['destination']}:{r['date_from']}:{r['date_to']}:{adults}"
-        buttons.append([InlineKeyboardButton(label, callback_data=cb)])
+        buttons.append([
+            InlineKeyboardButton(label, callback_data=cb),
+            InlineKeyboardButton("🗑", callback_data=f"{_CB_DEL_ROUTE}:{r['route_id']}"),
+        ])
+    buttons.append([InlineKeyboardButton("✈️ Другой маршрут", callback_data=f"{_CB_CUSTOM}:{adults}")])
+    return InlineKeyboardMarkup(buttons)
 
-    buttons.append([InlineKeyboardButton("✈️ Любой маршрут", callback_data=f"{_CB_CUSTOM}:{adults}")])
 
-    await query.edit_message_text(f"Выберите маршрут ({adults} взр.):", reply_markup=InlineKeyboardMarkup(buttons))
+async def cb_pax(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+    parts = query.data.split(":")
+    adults = parts[1]
+    visa_free = bool(int(parts[2])) if len(parts) > 2 else context.user_data.get("visa_free_pref", True)
+    context.user_data["last_route_list"] = {"adults": adults, "visa_free": visa_free}
+
+    try:
+        routes = _load_enabled_routes(visa_free_only=visa_free)
+    except Exception:
+        await query.edit_message_text("Не удалось загрузить маршруты.")
+        return
+
+    visa_label = "без визы" if visa_free else "все маршруты"
+    await query.edit_message_text(
+        f"Выберите маршрут ({adults} взр., {visa_label}):",
+        reply_markup=_build_route_list_keyboard(routes, adults),
+    )
 
 
 async def cb_custom_route(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -742,7 +1020,8 @@ async def cb_cal_day(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         filtered = _filter_by_dates(all_items, d_from, d_to)
         filtered.sort(key=lambda x: x["price"])
 
-        text, best_price = _format_results(filtered, org, dst, adults, label)
+        visa_free_pref = context.user_data.get("visa_free_pref", True)
+        text, best_price = _format_results(filtered, org, dst, adults, label, visa_free=visa_free_pref)
 
         keyboard = _result_keyboard(rid, org, dst, best_price) if best_price is not None else None
         await query.edit_message_text(
@@ -798,8 +1077,10 @@ async def cb_cheapest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     query = update.callback_query
     await query.answer()
 
-    # cheap:{rid}:{org}:{dst}:{adt}:{year}:{month}
-    _, rid, org, dst, adt, y, m = query.data.split(":")
+    # cheap:{rid}:{org}:{dst}:{adt}:{year}:{month}  (visa_free опционально в конце)
+    parts = query.data.split(":")
+    _, rid, org, dst, adt, y, m = parts[:7]
+    show_all = len(parts) > 7 and parts[7] == "all"
     adults = int(adt)
     year, month = int(y), int(m)
     month_str = f"{year}-{month:02d}"
@@ -818,8 +1099,24 @@ async def cb_cheapest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         )
         return
 
-    items.sort(key=lambda x: x["price"])
-    top3 = items[:3]
+    apply_vf = context.user_data.get("visa_free_pref", True) and not show_all
+    if apply_vf:
+        filtered = [it for it in items if not _has_schengen_transit(it)]
+    else:
+        filtered = items
+    filtered.sort(key=lambda x: x["price"])
+    top3 = filtered[:3]
+
+    if not top3:
+        show_all_cb = f"{_CB_CHEAPEST}:{rid}:{org}:{dst}:{adt}:{y}:{m}:all"
+        await query.edit_message_text(
+            f"По маршруту <b>{org} → {dst}</b> за {month_label} нет рейсов без Шенген-пересадок.",
+            parse_mode=ParseMode.HTML,
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("🌍 Показать все (включая Шенген)", callback_data=show_all_cb),
+            ]]),
+        )
+        return
 
     label = route_label(org, dst)
     lines = [f"<b>{label}</b> — топ дешёвых дат за {month_label} ({adults} взр.):\n"]
@@ -830,7 +1127,7 @@ async def cb_cheapest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         airline = item.get("airline", "?")
         duration = item.get("duration_to") or item.get("duration") or 0
         stops_str = "прямой" if stops == 0 else f"{stops} пер."
-        url = _aviasales_url(org, dst, dep.date(), adults)
+        url = _aviasales_url(org, dst, dep.date(), adults, item.get("link"))
         lines.append(
             f"{i}. <b>{dep.strftime('%d %b').lower()}</b>  {_fmt_duration(duration)}  {stops_str}  [{airline}]\n"
             f"   {price:,}₽/чел"
@@ -959,10 +1256,11 @@ async def cb_unwatch(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
 async def post_init(app: Application) -> None:
     await app.bot.set_my_commands([
-        BotCommand("search", "Поиск билетов"),
-        BotCommand("history", "История цен"),
-        BotCommand("unwatch", "Мои подписки / отменить алёрт"),
-        BotCommand("help", "Справка"),
+        BotCommand("search",   "Поиск билетов"),
+        BotCommand("history",  "История цен"),
+        BotCommand("mystats",  "Моя статистика"),
+        BotCommand("unwatch",  "Мои подписки / отменить алёрт"),
+        BotCommand("help",     "Справка"),
     ])
 
 
@@ -977,7 +1275,10 @@ def main() -> None:
     app.add_handler(CommandHandler("help", cmd_help))
     app.add_handler(CommandHandler("search", cmd_search))
     app.add_handler(CommandHandler("history", cmd_history))
-    app.add_handler(CommandHandler("unwatch", cmd_unwatch))
+    app.add_handler(CommandHandler("unwatch",  cmd_unwatch))
+    app.add_handler(CommandHandler("mystats",  cmd_mystats))
+    app.add_handler(CommandHandler("delroute", cmd_delroute))
+    app.add_handler(CommandHandler("clear",    cmd_clear))
 
     app.add_handler(MessageHandler(
         filters.TEXT & filters.Regex(f"^({_MENU_SEARCH}|{_MENU_HISTORY}|{_MENU_HELP})$"),
@@ -986,6 +1287,7 @@ def main() -> None:
     # Free-form route input — lower priority than menu buttons
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
 
+    app.add_handler(CallbackQueryHandler(cb_vf_toggle,    pattern=rf"^{_CB_VF_TOGGLE}:"))
     app.add_handler(CallbackQueryHandler(cb_pax,          pattern=rf"^{_CB_PAX}:"))
     app.add_handler(CallbackQueryHandler(cb_custom_route, pattern=rf"^{_CB_CUSTOM}:"))
     app.add_handler(CallbackQueryHandler(cb_route,        pattern=rf"^{_CB_ROUTE}:"))
@@ -995,8 +1297,10 @@ def main() -> None:
     app.add_handler(CallbackQueryHandler(cb_cheapest,      pattern=rf"^{_CB_CHEAPEST}:"))
     app.add_handler(CallbackQueryHandler(cb_oneway,       pattern=rf"^{_CB_ONEWAY}:"))
     app.add_handler(CallbackQueryHandler(cb_hist,         pattern=rf"^{_CB_HIST}:"))
-    app.add_handler(CallbackQueryHandler(cb_watch,        pattern=rf"^{_CB_WATCH}:"))
-    app.add_handler(CallbackQueryHandler(cb_unwatch,      pattern=rf"^{_CB_UNWATCH}:"))
+    app.add_handler(CallbackQueryHandler(cb_watch,            pattern=rf"^{_CB_WATCH}:"))
+    app.add_handler(CallbackQueryHandler(cb_unwatch,          pattern=rf"^{_CB_UNWATCH}:"))
+    app.add_handler(CallbackQueryHandler(cb_del_route,        pattern=rf"^{_CB_DEL_ROUTE}:"))
+    app.add_handler(CallbackQueryHandler(cb_del_route_confirm, pattern=rf"^{_CB_DEL_CONF}:"))
     app.add_handler(CallbackQueryHandler(lambda u, c: u.callback_query.answer(), pattern=r"^noop$"))
 
     logger.info("Bot started")

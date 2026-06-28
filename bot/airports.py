@@ -97,7 +97,7 @@ AIRPORT_NAMES: dict[str, str] = {
     "UUS": "Южно-Сахалинск",
     "VVO": "Владивосток",
     # Европа
-    "MIL": "Милан",
+    "MIL": "Милан",  # meta-code, used when airport unspecified
     "MXP": "Милан (Мальпенса)",
     "LIN": "Милан (Линате)",
     "BGY": "Милан (Бергамо)",
@@ -118,6 +118,7 @@ AIRPORT_NAMES: dict[str, str] = {
     "ATH": "Афины",
     "WAW": "Варшава",
     "PRG": "Прага",
+    "BEG": "Белград",
     "BUD": "Будапешт",
     "VIE": "Вена",
     "ZRH": "Цюрих",
@@ -236,6 +237,7 @@ _CITY_ALIASES: dict[str, str] = {
     "афины": "ATH",
     "варшава": "WAW",
     "прага": "PRG",
+    "белград": "BEG",
     "будапешт": "BUD",
     "вена": "VIE",
     "цюрих": "ZRH",
@@ -344,6 +346,8 @@ _CITY_ALIASES: dict[str, str] = {
     "athens": "ATH",
     "warsaw": "WAW",
     "prague": "PRG",
+    "belgrade": "BEG",
+    "beograd": "BEG",
     "budapest": "BUD",
     "vienna": "VIE",
     "zurich": "ZRH",

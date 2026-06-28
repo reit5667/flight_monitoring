@@ -890,7 +890,7 @@
       "id": "TASK-038",
       "category": "bot",
       "priority": "medium",
-      "status": "pending",
+      "status": "done",
       "description": "Telegram Mini App: дашборд с историей цен и графиками прямо в боте",
       "acceptance_criteria": [
         "Кнопка 'График' в результатах поиска открывает WebApp внутри Telegram",
@@ -909,7 +909,7 @@
       "id": "TASK-039",
       "category": "bot",
       "priority": "low",
-      "status": "pending",
+      "status": "done",
       "description": "Telegram Bot: команда /mystats — личная статистика пользователя",
       "acceptance_criteria": [
         "/mystats показывает: кол-во поисков, активные подписки, сколько раз сработал алёрт",
@@ -922,6 +922,86 @@
       "dependencies": [
         "TASK-034"
       ]
+    },
+    {
+      "id": "TASK-040",
+      "category": "bot",
+      "priority": "medium",
+      "status": "done",
+      "description": "Фильтр visa_free: колонка в БД + фильтрация маршрутов и транзитных пересадок",
+      "acceptance_criteria": [
+        "Колонка visa_free BOOLEAN добавлена в таблицу routes (migration 005)",
+        "Шенгенские направления отмечены visa_free=false",
+        "Переключатель «✈️ Без визы» на экране выбора пассажиров — сохраняется в user_data",
+        "Фильтр работает на двух уровнях: destination (из БД) и транзитные аэропорты (из ссылки API)",
+        "При нулевых результатах появляется кнопка «🌍 Показать все (включая Шенген)»"
+      ],
+      "test_steps": [
+        "Поиск SGN→BEG с фильтром включён — рейсы через WAW/BGY/VIE не показываются",
+        "Нажать «Показать все» — все рейсы появляются"
+      ],
+      "dependencies": ["TASK-035"]
+    },
+    {
+      "id": "TASK-041",
+      "category": "bot",
+      "priority": "medium",
+      "status": "done",
+      "description": "UX-улучшения бота: удаление маршрутов, /clear, прямые ссылки из API",
+      "acceptance_criteria": [
+        "Кнопка 🗑 рядом с каждым маршрутом в списке — удаление с подтверждением",
+        "После удаления остаётся экран выбора маршрута (не сбрасывается)",
+        "/delroute — отдельная команда для удаления маршрутов",
+        "/clear — очищает чат (удаляет команду, присылает свежее меню)",
+        "Ссылки на Aviasales ведут напрямую на конкретный рейс (expected_price_uuid из API)",
+        "«✈️ Другой маршрут» вместо «Любой маршрут»"
+      ],
+      "test_steps": [
+        "Нажать 🗑 на маршруте → подтвердить → маршрут удалён, список обновился",
+        "/clear → чат сброшен к свежему меню",
+        "Ссылка на рейс открывает конкретный билет на aviasales.ru"
+      ],
+      "dependencies": ["TASK-035"]
+    },
+    {
+      "id": "TASK-042",
+      "category": "integration",
+      "priority": "high",
+      "status": "pending",
+      "description": "Amadeus API: второй коннектор для live-поиска рейсов",
+      "acceptance_criteria": [
+        "Зарегистрировать приложение на developers.amadeus.com, получить API key + secret",
+        "connectors/amadeus.py: класс AmadeusConnector(BaseConnector)",
+        "OAuth2 авторизация (client_credentials), автообновление токена",
+        "Endpoint: Flight Offers Search GET /v2/shopping/flight-offers",
+        "Результат парсится в list[Flight] через parser/amadeus.py",
+        "Маршруты в БД получают маппинг amadeus в source_route_mappings",
+        "В bot.py: при поиске через «Другой маршрут» использует AmadeusConnector напрямую для live-данных",
+        "Добавить AMADEUS_CLIENT_ID и AMADEUS_CLIENT_SECRET в .env.example"
+      ],
+      "test_steps": [
+        "python -c 'from connectors.amadeus import AmadeusConnector' — импорт без ошибок",
+        "Поиск SGN→BEG — возвращает рейсы через IST и DOH (которых нет у Travelpayouts)",
+        "Токен обновляется автоматически при истечении",
+        "При ошибке API — возвращает [], не падает"
+      ],
+      "dependencies": ["TASK-010", "TASK-040"]
+    },
+    {
+      "id": "TASK-043",
+      "category": "bot",
+      "priority": "low",
+      "status": "pending",
+      "description": "Поиск по стране/региону отправления — найти лучший аэропорт по цене",
+      "acceptance_criteria": [
+        "В «Другой маршрут» можно ввести страну («Вьетнам», «Vietnam») вместо конкретного города",
+        "Бот ищет по всем аэропортам этой страны и возвращает лучший результат",
+        "Словарь страна→список IATA-кодов добавлен в bot/airports.py"
+      ],
+      "test_steps": [
+        "Ввести 'Вьетнам Белград' — бот ищет SGN+HAN+DAD→BEG и показывает лучший"
+      ],
+      "dependencies": ["TASK-035", "TASK-042"]
     }
   ]
 }
