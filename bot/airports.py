@@ -430,6 +430,136 @@ def parse_route_input(text: str) -> tuple[str, str] | None:
     return None
 
 
+# Страна → список IATA-кодов основных аэропортов (первый = основной/хаб)
+COUNTRY_AIRPORTS: dict[str, list[str]] = {
+    "вьетнам":       ["SGN", "HAN", "DAD"],
+    "таиланд":       ["BKK", "DMK", "HKT", "CNX"],
+    "малайзия":      ["KUL", "PEN"],
+    "сингапур":      ["SIN"],
+    "индонезия":     ["CGK", "DPS", "SUB"],
+    "филиппины":     ["MNL", "CEB"],
+    "мьянма":        ["RGN"],
+    "камбоджа":      ["PNH", "REP"],
+    "лаос":          ["VTE", "LPQ"],
+    "шри-ланка":     ["CMB"],
+    "индия":         ["DEL", "BOM", "BLR", "MAA", "GOI", "CCU"],
+    "непал":         ["KTM"],
+    "китай":         ["PVG", "PEK", "CAN", "SZX", "CTU", "KMG"],
+    "япония":        ["NRT", "HND", "KIX", "CTS"],
+    "южная корея":   ["ICN", "GMP"],
+    "корея":         ["ICN", "GMP"],
+    "оаэ":           ["DXB", "AUH"],
+    "турция":        ["IST", "SAW", "AYT"],
+    "казахстан":     ["ALA", "NQZ"],
+    "узбекистан":    ["TAS"],
+    "грузия":        ["TBS"],
+    "армения":       ["EVN"],
+    "азербайджан":   ["GYD"],
+    "россия":        ["SVO", "DME", "VKO", "LED", "SVX", "OVB", "VVO"],
+    "германия":      ["FRA", "MUC"],
+    "франция":       ["CDG", "ORY"],
+    "италия":        ["FCO", "MXP", "VCE", "NAP"],
+    "испания":       ["BCN", "MAD"],
+    "великобритания": ["LHR", "LGW", "STN"],
+    "нидерланды":    ["AMS"],
+    "австрия":       ["VIE"],
+    "швейцария":     ["ZRH"],
+    "сербия":        ["BEG"],
+    "венгрия":       ["BUD"],
+    "польша":        ["WAW"],
+    "чехия":         ["PRG"],
+    "португалия":    ["LIS"],
+    "греция":        ["ATH"],
+    "дания":         ["CPH"],
+    "швеция":        ["ARN"],
+    "финляндия":     ["HEL"],
+    "норвегия":      ["OSL"],
+    "австралия":     ["SYD", "MEL"],
+    "египет":        ["CAI"],
+    # Английские названия
+    "vietnam":       ["SGN", "HAN", "DAD"],
+    "thailand":      ["BKK", "DMK", "HKT", "CNX"],
+    "malaysia":      ["KUL", "PEN"],
+    "singapore":     ["SIN"],
+    "indonesia":     ["CGK", "DPS", "SUB"],
+    "philippines":   ["MNL", "CEB"],
+    "myanmar":       ["RGN"],
+    "cambodia":      ["PNH", "REP"],
+    "laos":          ["VTE", "LPQ"],
+    "sri lanka":     ["CMB"],
+    "india":         ["DEL", "BOM", "BLR", "MAA", "GOI", "CCU"],
+    "nepal":         ["KTM"],
+    "china":         ["PVG", "PEK", "CAN", "SZX"],
+    "japan":         ["NRT", "HND", "KIX"],
+    "south korea":   ["ICN", "GMP"],
+    "korea":         ["ICN", "GMP"],
+    "uae":           ["DXB", "AUH"],
+    "turkey":        ["IST", "SAW", "AYT"],
+    "germany":       ["FRA", "MUC"],
+    "france":        ["CDG", "ORY"],
+    "italy":         ["FCO", "MXP", "VCE", "NAP"],
+    "spain":         ["BCN", "MAD"],
+    "uk":            ["LHR", "LGW", "STN"],
+    "netherlands":   ["AMS"],
+    "austria":       ["VIE"],
+    "switzerland":   ["ZRH"],
+    "serbia":        ["BEG"],
+    "hungary":       ["BUD"],
+    "poland":        ["WAW"],
+    "czech republic": ["PRG"],
+    "czechia":       ["PRG"],
+    "portugal":      ["LIS"],
+    "greece":        ["ATH"],
+    "denmark":       ["CPH"],
+    "sweden":        ["ARN"],
+    "finland":       ["HEL"],
+    "norway":        ["OSL"],
+    "australia":     ["SYD", "MEL"],
+    "egypt":         ["CAI"],
+    "russia":        ["SVO", "DME", "LED"],
+    "kazakhstan":    ["ALA", "NQZ"],
+    "georgia":       ["TBS"],
+    "armenia":       ["EVN"],
+    "azerbaijan":    ["GYD"],
+}
+
+
+def resolve_country(text: str) -> list[str] | None:
+    """Вернуть список IATA-кодов страны или None если не распознана."""
+    return COUNTRY_AIRPORTS.get(text.strip().lower())
+
+
+def parse_route_with_countries(text: str) -> tuple[list[str], list[str]] | None:
+    """Расширенный парсер маршрута: поддерживает города и страны.
+
+    Возвращает (origins, destinations) — каждый список из 1+ IATA-кодов.
+    """
+    def _resolve_location(token: str) -> list[str] | None:
+        city = resolve_city(token)
+        if city:
+            return [city]
+        return resolve_country(token)
+
+    text = text.strip()
+    parts = text.split()
+
+    if len(parts) == 2:
+        origins = _resolve_location(parts[0])
+        dests = _resolve_location(parts[1])
+        if origins and dests:
+            return origins, dests
+
+    for sep in ("→", "->", "-", ","):
+        if sep in text:
+            halves = text.split(sep, 1)
+            origins = _resolve_location(halves[0].strip())
+            dests = _resolve_location(halves[1].strip())
+            if origins and dests:
+                return origins, dests
+
+    return None
+
+
 def search_cities(query: str, limit: int = 5) -> list[tuple[str, str]]:
     """
     Найти города по частичному вводу (≥2 символа).

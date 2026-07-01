@@ -14,7 +14,7 @@
 
 **Активная задача:** нет
 
-**Следующая задача:** TASK-042 — Amadeus API коннектор (live-поиск рейсов)
+**Следующая задача:** нет (все задачи завершены)
 
 **Блокеры:** нет
 
@@ -91,6 +91,9 @@
 | 2026-06-27 | TASK-039 | /mystats: _load_user_stats() — активные/всего подписок, дата первой, лучшая найденная цена; зарегистрирована в BotCommands |
 | 2026-06-28 | TASK-040 | migration 005_visa_free.sql; _SCHENGEN_AIRPORTS frozenset; _has_schengen_transit() парсит маршрут из API-ссылки; фильтр на двух уровнях: destination (БД) + транзит (API link); кнопка «Показать все включая Шенген» при нулевых результатах |
 | 2026-06-28 | TASK-041 | /delroute + 🗑 в списке маршрутов + возврат к списку после удаления; /clear; прямые ссылки из API (expected_price_uuid); переключатель visa_free с памятью предпочтения; «Другой маршрут» вместо «Любой» |
+| 2026-06-28 | TASK-042 | AmadeusConnector(BaseConnector) в connectors/amadeus.py; parse_amadeus_flights() → list[Flight] в parser/amadeus.py; migration 006_amadeus_mappings.sql; AMADEUS_CLIENT_ID/SECRET в .env.example; бот уже использует amadeus как fallback |
+| 2026-07-01 | TASK-042 (пересмотр) | Amadeus не дал доступ → заменён на SerpApi (Google Flights); connectors/serpapi.py + parser/serpapi.py; bot.py переключён на fetch_serpapi_flights как fallback |
+| 2026-07-01 | TASK-043 | Поиск по стране: COUNTRY_AIRPORTS (40+ стран RU/EN) в airports.py; parse_route_with_countries(); параллельный поиск всех комбо через asyncio.gather; кнопка «← Назад к маршрутам»; обновлён /help |
 
 ---
 

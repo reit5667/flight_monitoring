@@ -940,7 +940,9 @@
         "Поиск SGN→BEG с фильтром включён — рейсы через WAW/BGY/VIE не показываются",
         "Нажать «Показать все» — все рейсы появляются"
       ],
-      "dependencies": ["TASK-035"]
+      "dependencies": [
+        "TASK-035"
+      ]
     },
     {
       "id": "TASK-041",
@@ -961,13 +963,15 @@
         "/clear → чат сброшен к свежему меню",
         "Ссылка на рейс открывает конкретный билет на aviasales.ru"
       ],
-      "dependencies": ["TASK-035"]
+      "dependencies": [
+        "TASK-035"
+      ]
     },
     {
       "id": "TASK-042",
       "category": "integration",
       "priority": "high",
-      "status": "pending",
+      "status": "done",
       "description": "Amadeus API: второй коннектор для live-поиска рейсов",
       "acceptance_criteria": [
         "Зарегистрировать приложение на developers.amadeus.com, получить API key + secret",
@@ -985,7 +989,10 @@
         "Токен обновляется автоматически при истечении",
         "При ошибке API — возвращает [], не падает"
       ],
-      "dependencies": ["TASK-010", "TASK-040"]
+      "dependencies": [
+        "TASK-010",
+        "TASK-040"
+      ]
     },
     {
       "id": "TASK-043",
@@ -1001,7 +1008,10 @@
       "test_steps": [
         "Ввести 'Вьетнам Белград' — бот ищет SGN+HAN+DAD→BEG и показывает лучший"
       ],
-      "dependencies": ["TASK-035", "TASK-042"]
+      "dependencies": [
+        "TASK-035",
+        "TASK-042"
+      ]
     }
   ]
 }
