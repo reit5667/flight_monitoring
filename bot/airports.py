@@ -152,6 +152,10 @@ _CITY_ALIASES: dict[str, str] = {
     "хошимин": "SGN",
     "сайгон": "SGN",
     "дананг": "DAD",
+    "нячанг": "CXR",
+    "нха транг": "CXR",
+    "nha trang": "CXR",
+    "nha": "CXR",
     "бангкок": "BKK",
     "пхукет": "HKT",
     "чиангмай": "CNX",
@@ -380,6 +384,12 @@ def route_label(origin: str, dest: str) -> str:
     return f"{iata_to_city(origin)} → {iata_to_city(dest)}"
 
 
+# Коды-алиасы: нестандартные/городские коды → реальный IATA аэропорта
+_IATA_REMAP: dict[str, str] = {
+    "NHA": "CXR",  # Нячанг (Cam Ranh)
+}
+
+
 def resolve_city(text: str) -> str | None:
     """
     Попробовать распознать текст как IATA-код или название города.
@@ -388,9 +398,9 @@ def resolve_city(text: str) -> str | None:
     text = text.strip()
     upper = text.upper()
 
-    # Уже IATA-код
+    # Уже IATA-код (с учётом ремаппинга нестандартных кодов)
     if len(upper) == 3 and upper.isalpha():
-        return upper
+        return _IATA_REMAP.get(upper, upper)
 
     # Поиск по алиасам (нижний регистр)
     lower = text.lower()

@@ -122,6 +122,9 @@ _CB_DEL_ROUTE = "dr"       # dr:{route_id}  — удалить маршрут и
 _CB_DEL_CONF  = "drc"      # drc:{route_id} — подтверждение удаления
 _CB_VF_TOGGLE = "vft"      # vft:{visa_free}  — переключатель фильтра visa_free на экране пассажиров
 _CB_BACK_ROUTES = "br"    # br:{adults}:{visa_free} — вернуться к списку маршрутов
+_CB_FILTER_OPEN = "fo"    # fo  — открыть экран фильтров
+_CB_FILTER_TOG  = "ft"    # ft:{key}:{value}  — переключить один фильтр
+_CB_FILTER_DONE = "fd"    # fd  — закрыть фильтры, вернуться к маршрутам
 
 _MENU_SEARCH  = "🔍 Поиск"
 _MENU_HISTORY = "📊 История цен"
@@ -395,7 +398,13 @@ def _load_user_stats(chat_id: int) -> dict:
 # Travelpayouts search
 # ---------------------------------------------------------------------------
 
+def _remap_iata(code: str) -> str:
+    from bot.airports import _IATA_REMAP
+    return _IATA_REMAP.get(code.upper(), code.upper())
+
+
 async def _fetch_flights(origin: str, dest: str, month: str) -> list[dict]:
+    origin, dest = _remap_iata(origin), _remap_iata(dest)
     params = {
         "origin": origin, "destination": dest,
         "departure_at": month, "currency": "rub",
@@ -413,6 +422,7 @@ async def _fetch_flights(origin: str, dest: str, month: str) -> list[dict]:
 
 async def _fetch_flights_live(origin: str, dest: str, departure_date: str, adults: int = 1) -> list[dict]:
     """Fetch from Google Flights via SerpApi and return Travelpayouts-compatible dicts."""
+    origin, dest = _remap_iata(origin), _remap_iata(dest)
     offers = await fetch_serpapi_flights(origin, dest, departure_date, adults=adults)
     return parse_serpapi_offers(offers)
 
@@ -476,12 +486,18 @@ def _has_schengen_transit(item: dict) -> bool:
     return any(a in _SCHENGEN_AIRPORTS for a in transit)
 
 
+_AVIASALES_MARKER = "741011"
+
+
 def _aviasales_url(origin: str, dest: str, dep_date: date, adults: int, link: str | None = None) -> str:
+    import re
     if link:
         base = link if link.startswith("http") else f"https://www.aviasales.ru{link}"
-        # Заменяем число пассажиров в пути если оно там зашито (обычно /search/SGN1007BEG1)
-        return base
-    return f"https://www.aviasales.ru/search/{origin}{dep_date.strftime('%d%m')}{dest}{adults}"
+        # Заменяем число пассажиров в конце пути: /search/SGN1007BEG1 → .../BEG2
+        base = re.sub(r'([A-Z]{3}\d{4}[A-Z]{3})\d+', rf'\g<1>{adults}', base)
+        sep = "&" if "?" in base else "?"
+        return f"{base}{sep}marker={_AVIASALES_MARKER}"
+    return f"https://www.aviasales.ru/search/{origin}{dep_date.strftime('%d%m')}{dest}{adults}?marker={_AVIASALES_MARKER}"
 
 
 def _fmt_duration(minutes: int) -> str:
@@ -592,6 +608,121 @@ def _progress_bar(step: int, total: int = 5) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Search filters
+# ---------------------------------------------------------------------------
+
+def _default_filters() -> dict:
+    return {
+        "visa_free_pref": True,
+        "stops": "any",        # "any" | "0" | "1"
+        "dep_morning": True,   # вылет 6–12
+        "dep_day": True,       # вылет 12–18
+        "dep_evening": True,   # вылет 18–24
+        "dep_night": True,     # вылет 0–6
+        "max_duration": 0,     # 0 = без ограничения, иначе в минутах
+        "no_night_layover": False,
+    }
+
+
+def _get_filters(user_data: dict) -> dict:
+    base = _default_filters()
+    base.update(user_data.get("filters", {}))
+    return base
+
+
+def _filters_active(f: dict) -> bool:
+    return any(f.get(k) != v for k, v in _default_filters().items())
+
+
+def _apply_search_filters(items: list[dict], f: dict) -> list[dict]:
+    from datetime import timedelta as _td
+
+    result = items
+
+    stops_val = f.get("stops", "any")
+    if stops_val == "0":
+        result = [i for i in result if i.get("transfers", 0) == 0]
+    elif stops_val == "1":
+        result = [i for i in result if i.get("transfers", 0) <= 1]
+
+    dep_slots = [
+        ("dep_night",    0,  6),
+        ("dep_morning",  6, 12),
+        ("dep_day",     12, 18),
+        ("dep_evening", 18, 24),
+    ]
+    if not all(f.get(k, True) for k, _, _ in dep_slots):
+        def dep_ok(item: dict) -> bool:
+            try:
+                h = datetime.fromisoformat(item["departure_at"]).hour
+                return any(f.get(k, True) and s <= h < e for k, s, e in dep_slots)
+            except Exception:
+                return True
+        result = [i for i in result if dep_ok(i)]
+
+    max_dur = f.get("max_duration", 0)
+    if max_dur:
+        result = [i for i in result if (i.get("duration_to") or i.get("duration") or 0) <= max_dur]
+
+    if f.get("no_night_layover"):
+        def has_night_lay(item: dict) -> bool:
+            if not item.get("transfers", 0):
+                return False
+            try:
+                dep = datetime.fromisoformat(item["departure_at"])
+                dur = item.get("duration_to") or item.get("duration") or 0
+                mid = dep + _td(minutes=dur // 2)
+                return mid.hour >= 22 or mid.hour < 6
+            except Exception:
+                return False
+        result = [i for i in result if not has_night_lay(i)]
+
+    return result
+
+
+def _build_filter_keyboard(f: dict) -> InlineKeyboardMarkup:
+    def chk(cond: bool) -> str:
+        return "✓ " if cond else ""
+
+    stops = f.get("stops", "any")
+    max_dur = f.get("max_duration", 0)
+
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton(
+                f"{chk(f.get('visa_free_pref', True))}Без визы (без Шенгена)",
+                callback_data=f"{_CB_FILTER_TOG}:visa_free_pref:{int(not f.get('visa_free_pref', True))}",
+            ),
+        ],
+        [
+            InlineKeyboardButton(f"{chk(stops == 'any')}Любые", callback_data=f"{_CB_FILTER_TOG}:stops:any"),
+            InlineKeyboardButton(f"{chk(stops == '0')}Прямые", callback_data=f"{_CB_FILTER_TOG}:stops:0"),
+            InlineKeyboardButton(f"{chk(stops == '1')}≤1 пер.", callback_data=f"{_CB_FILTER_TOG}:stops:1"),
+        ],
+        [
+            InlineKeyboardButton(f"{chk(f.get('dep_morning', True))}Утро 6–12", callback_data=f"{_CB_FILTER_TOG}:dep_morning:{int(not f.get('dep_morning', True))}"),
+            InlineKeyboardButton(f"{chk(f.get('dep_day', True))}День 12–18", callback_data=f"{_CB_FILTER_TOG}:dep_day:{int(not f.get('dep_day', True))}"),
+        ],
+        [
+            InlineKeyboardButton(f"{chk(f.get('dep_evening', True))}Вечер 18–24", callback_data=f"{_CB_FILTER_TOG}:dep_evening:{int(not f.get('dep_evening', True))}"),
+            InlineKeyboardButton(f"{chk(f.get('dep_night', True))}Ночь 0–6", callback_data=f"{_CB_FILTER_TOG}:dep_night:{int(not f.get('dep_night', True))}"),
+        ],
+        [
+            InlineKeyboardButton(f"{chk(max_dur == 0)}Любое время в пути", callback_data=f"{_CB_FILTER_TOG}:max_duration:0"),
+            InlineKeyboardButton(f"{chk(max_dur == 480)}≤8ч", callback_data=f"{_CB_FILTER_TOG}:max_duration:480"),
+            InlineKeyboardButton(f"{chk(max_dur == 900)}≤15ч", callback_data=f"{_CB_FILTER_TOG}:max_duration:900"),
+        ],
+        [
+            InlineKeyboardButton(
+                f"{chk(f.get('no_night_layover', False))}Без ночных пересадок ~",
+                callback_data=f"{_CB_FILTER_TOG}:no_night_layover:{int(not f.get('no_night_layover', False))}",
+            ),
+        ],
+        [InlineKeyboardButton("← Готово", callback_data=_CB_FILTER_DONE)],
+    ])
+
+
+# ---------------------------------------------------------------------------
 # Shared: show calendar for a route
 # ---------------------------------------------------------------------------
 
@@ -643,22 +774,17 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     )
 
 
-def _pax_keyboard(visa_free: bool) -> InlineKeyboardMarkup:
-    toggle_label = "✈️ Без визы: вкл" if visa_free else "🌍 Без визы: выкл"
-    return InlineKeyboardMarkup([
-        [
-            InlineKeyboardButton("1 чел.", callback_data=f"{_CB_PAX}:1:{int(visa_free)}"),
-            InlineKeyboardButton("2 чел.", callback_data=f"{_CB_PAX}:2:{int(visa_free)}"),
-            InlineKeyboardButton("3 чел.", callback_data=f"{_CB_PAX}:3:{int(visa_free)}"),
-            InlineKeyboardButton("4 чел.", callback_data=f"{_CB_PAX}:4:{int(visa_free)}"),
-        ],
-        [InlineKeyboardButton(toggle_label, callback_data=f"{_CB_VF_TOGGLE}:{int(not visa_free)}")],
-    ])
+def _pax_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([[
+        InlineKeyboardButton("1 чел.", callback_data=f"{_CB_PAX}:1"),
+        InlineKeyboardButton("2 чел.", callback_data=f"{_CB_PAX}:2"),
+        InlineKeyboardButton("3 чел.", callback_data=f"{_CB_PAX}:3"),
+        InlineKeyboardButton("4 чел.", callback_data=f"{_CB_PAX}:4"),
+    ]])
 
 
 async def _show_pax_selection(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    visa_free = context.user_data.get("visa_free_pref", True)
-    await update.message.reply_text("Сколько пассажиров?", reply_markup=_pax_keyboard(visa_free))
+    await update.message.reply_text("Сколько пассажиров?", reply_markup=_pax_keyboard())
 
 
 async def cmd_search(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -789,7 +915,7 @@ async def cb_del_route_confirm(update: Update, context: ContextTypes.DEFAULT_TYP
     visa_label = "без визы" if visa_free else "все маршруты"
     await query.edit_message_text(
         f"Маршрут <b>{label}</b> удалён.\n\nВыберите маршрут ({adults} взр., {visa_label}):",
-        reply_markup=_build_route_list_keyboard(routes, adults),
+        reply_markup=_build_route_list_keyboard(routes, adults, context.user_data),
         parse_mode=ParseMode.HTML,
     )
 
@@ -958,7 +1084,7 @@ async def cb_vf_toggle(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     await query.edit_message_text("Сколько пассажиров?", reply_markup=_pax_keyboard(visa_free))
 
 
-def _build_route_list_keyboard(routes: list[dict], adults: str) -> InlineKeyboardMarkup:
+def _build_route_list_keyboard(routes: list[dict], adults: str, user_data: dict | None = None) -> InlineKeyboardMarkup:
     buttons = []
     for r in routes:
         label = r["notes"] or route_label(r['origin'], r['destination'])
@@ -968,6 +1094,9 @@ def _build_route_list_keyboard(routes: list[dict], adults: str) -> InlineKeyboar
             InlineKeyboardButton("🗑", callback_data=f"{_CB_DEL_ROUTE}:{r['route_id']}"),
         ])
     buttons.append([InlineKeyboardButton("✈️ Другой маршрут", callback_data=f"{_CB_CUSTOM}:{adults}")])
+    f = _get_filters(user_data or {})
+    filter_label = "⚙️ Фильтры •" if _filters_active(f) else "⚙️ Фильтры"
+    buttons.append([InlineKeyboardButton(filter_label, callback_data=_CB_FILTER_OPEN)])
     return InlineKeyboardMarkup(buttons)
 
 
@@ -976,7 +1105,7 @@ async def cb_pax(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await query.answer()
     parts = query.data.split(":")
     adults = parts[1]
-    visa_free = bool(int(parts[2])) if len(parts) > 2 else context.user_data.get("visa_free_pref", True)
+    visa_free = _get_filters(context.user_data).get("visa_free_pref", True)
     context.user_data["last_route_list"] = {"adults": adults, "visa_free": visa_free}
 
     try:
@@ -988,7 +1117,7 @@ async def cb_pax(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     visa_label = "без визы" if visa_free else "все маршруты"
     await query.edit_message_text(
         f"Выберите маршрут ({adults} взр., {visa_label}):",
-        reply_markup=_build_route_list_keyboard(routes, adults),
+        reply_markup=_build_route_list_keyboard(routes, adults, context.user_data),
     )
 
 
@@ -1099,11 +1228,18 @@ async def cb_cal_day(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
                     filtered = live_filtered
                     label += "  [Google Flights live]"
 
+        filtered = _apply_search_filters(filtered, _get_filters(context.user_data))
         visa_free_pref = context.user_data.get("visa_free_pref", True)
         text, best_price = _format_results(filtered, org, dst, adults, label, visa_free=visa_free_pref)
 
         last = context.user_data.get("last_route_list", {})
-        keyboard = _result_keyboard(rid, org, dst, best_price, adults=last.get("adults", adt), visa_free=last.get("visa_free", True)) if best_price is not None else None
+        vf = last.get("visa_free", True)
+        if best_price is not None:
+            keyboard = _result_keyboard(rid, org, dst, best_price, adults=last.get("adults", adt), visa_free=vf)
+        else:
+            keyboard = InlineKeyboardMarkup([[InlineKeyboardButton(
+                "← К маршрутам", callback_data=f"{_CB_BACK_ROUTES}:{last.get('adults', adt)}:{int(vf)}"
+            )]])
         await query.edit_message_text(
             text, parse_mode=ParseMode.HTML, disable_web_page_preview=True,
             reply_markup=keyboard,
@@ -1153,7 +1289,7 @@ async def cb_city_pick(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 
 async def cb_cheapest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Cheapest-in-month search: find top-3 cheapest days for the selected month."""
+    """Cheapest-in-month search: find top-5 cheapest days for the selected month."""
     query = update.callback_query
     await query.answer()
 
@@ -1172,10 +1308,38 @@ async def cb_cheapest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     )
 
     items = await _fetch_flights(org, dst, month_str)
+    is_live = False
     if not items:
+        await query.edit_message_text(
+            f"Ищу рейсы {org} → {dst} за {month_label} через Google Flights…",
+            parse_mode=ParseMode.HTML,
+        )
+        import calendar as _cal
+        today = date.today()
+        last_day = _cal.monthrange(year, month)[1]
+        sample_dates = [
+            date(year, month, min(d, last_day)).isoformat()
+            for d in (1, 8, 15, 22)
+            if date(year, month, min(d, last_day)) >= today
+        ]
+        live_results = await asyncio.gather(
+            *[_fetch_flights_live(org, dst, d, adults) for d in sample_dates],
+            return_exceptions=True,
+        )
+        for r in live_results:
+            if isinstance(r, list):
+                items.extend(r)
+        is_live = bool(items)
+
+    if not items:
+        last = context.user_data.get("last_route_list", {})
+        vf = last.get("visa_free", True)
         await query.edit_message_text(
             f"По маршруту <b>{org} → {dst}</b> за {month_label} ничего не найдено.",
             parse_mode=ParseMode.HTML,
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(
+                "← К маршрутам", callback_data=f"{_CB_BACK_ROUTES}:{adt}:{int(vf)}"
+            )]]),
         )
         return
 
@@ -1185,9 +1349,10 @@ async def cb_cheapest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     else:
         filtered = items
     filtered.sort(key=lambda x: x["price"])
-    top3 = filtered[:3]
+    filtered = _apply_search_filters(filtered, _get_filters(context.user_data))
+    top5 = filtered[:5]
 
-    if not top3:
+    if not top5:
         show_all_cb = f"{_CB_CHEAPEST}:{rid}:{org}:{dst}:{adt}:{y}:{m}:all"
         await query.edit_message_text(
             f"По маршруту <b>{org} → {dst}</b> за {month_label} нет рейсов без Шенген-пересадок.",
@@ -1198,9 +1363,9 @@ async def cb_cheapest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         )
         return
 
-    label = route_label(org, dst)
+    label = route_label(org, dst) + ("  [Google Flights live]" if is_live else "")
     lines = [f"<b>{label}</b> — топ дешёвых дат за {month_label} ({adults} взр.):\n"]
-    for i, item in enumerate(top3, 1):
+    for i, item in enumerate(top5, 1):
         dep = datetime.fromisoformat(item["departure_at"])
         price = item["price"]
         stops = item.get("transfers", 0)
@@ -1215,7 +1380,7 @@ async def cb_cheapest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             + f"\n   <a href=\"{url}\">Aviasales</a>\n"
         )
 
-    best_price = top3[0]["price"]
+    best_price = top5[0]["price"]
     lines.append(f"\nЛучшая цена в месяце: <b>{best_price:,}₽</b>/чел")
 
     last = context.user_data.get("last_route_list", {})
@@ -1256,11 +1421,18 @@ async def cb_oneway(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     # Show flights from selected date onward within the month
     items = [i for i in items if datetime.fromisoformat(i.get("departure_at", "")).date() >= d_from]
     items.sort(key=lambda x: x["price"])
+    items = _apply_search_filters(items, _get_filters(context.user_data))
 
     text, best_price = _format_results(items, org, dst, adults, label)
 
     last = context.user_data.get("last_route_list", {})
-    keyboard = _result_keyboard(rid, org, dst, best_price, adults=last.get("adults", adt), visa_free=last.get("visa_free", True)) if best_price is not None else None
+    vf = last.get("visa_free", True)
+    if best_price is not None:
+        keyboard = _result_keyboard(rid, org, dst, best_price, adults=last.get("adults", adt), visa_free=vf)
+    else:
+        keyboard = InlineKeyboardMarkup([[InlineKeyboardButton(
+            "← К маршрутам", callback_data=f"{_CB_BACK_ROUTES}:{last.get('adults', adt)}:{int(vf)}"
+        )]])
     await query.edit_message_text(
         text, parse_mode=ParseMode.HTML, disable_web_page_preview=True,
         reply_markup=keyboard,
@@ -1314,7 +1486,7 @@ async def cb_back_routes(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     visa_label = "без визы" if visa_free else "все маршруты"
     await query.edit_message_text(
         f"Выберите маршрут ({adults} взр., {visa_label}):",
-        reply_markup=_build_route_list_keyboard(routes, adults),
+        reply_markup=_build_route_list_keyboard(routes, adults, context.user_data),
     )
 
 
@@ -1350,6 +1522,60 @@ async def cb_unwatch(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     sub_id = int(query.data.split(":")[1])
     ok = _deactivate_subscription(sub_id, query.from_user.id)
     await query.edit_message_text("Подписка отменена." if ok else "Подписка не найдена.")
+
+
+# ---------------------------------------------------------------------------
+# Filter handlers
+# ---------------------------------------------------------------------------
+
+async def cb_filter_open(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+    f = _get_filters(context.user_data)
+    await query.edit_message_text(
+        "⚙️ <b>Фильтры поиска</b>\n\n"
+        "<b>Пересадки</b> · <b>Время вылета</b> · <b>Время в пути</b>\n\n"
+        "<i>~ — приблизительный фильтр, работает не для всех рейсов</i>",
+        parse_mode=ParseMode.HTML,
+        reply_markup=_build_filter_keyboard(f),
+    )
+
+
+async def cb_filter_tog(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+    _, key, raw_value = query.data.split(":", 2)
+    f = _get_filters(context.user_data)
+    if key in ("stops",):
+        f[key] = raw_value
+    elif key == "max_duration":
+        f[key] = int(raw_value)
+    else:
+        f[key] = bool(int(raw_value))
+    context.user_data["filters"] = f
+    if key == "visa_free_pref":
+        context.user_data["visa_free_pref"] = f["visa_free_pref"]
+        if "last_route_list" in context.user_data:
+            context.user_data["last_route_list"]["visa_free"] = f["visa_free_pref"]
+    await query.edit_message_reply_markup(reply_markup=_build_filter_keyboard(f))
+
+
+async def cb_filter_done(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+    last = context.user_data.get("last_route_list", {"adults": "1", "visa_free": True})
+    adults = last.get("adults", "1")
+    visa_free = last.get("visa_free", True)
+    try:
+        routes = _load_enabled_routes(visa_free_only=visa_free)
+    except Exception:
+        await query.edit_message_text("Не удалось загрузить маршруты.")
+        return
+    visa_label = "без визы" if visa_free else "все маршруты"
+    await query.edit_message_text(
+        f"Выберите маршрут ({adults} взр., {visa_label}):",
+        reply_markup=_build_route_list_keyboard(routes, adults, context.user_data),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1404,6 +1630,9 @@ def main() -> None:
     app.add_handler(CallbackQueryHandler(cb_del_route,        pattern=rf"^{_CB_DEL_ROUTE}:"))
     app.add_handler(CallbackQueryHandler(cb_del_route_confirm, pattern=rf"^{_CB_DEL_CONF}:"))
     app.add_handler(CallbackQueryHandler(cb_back_routes,        pattern=rf"^{_CB_BACK_ROUTES}:"))
+    app.add_handler(CallbackQueryHandler(cb_filter_open,        pattern=rf"^{_CB_FILTER_OPEN}$"))
+    app.add_handler(CallbackQueryHandler(cb_filter_tog,         pattern=rf"^{_CB_FILTER_TOG}:"))
+    app.add_handler(CallbackQueryHandler(cb_filter_done,        pattern=rf"^{_CB_FILTER_DONE}$"))
     app.add_handler(CallbackQueryHandler(lambda u, c: u.callback_query.answer(), pattern=r"^noop$"))
 
     logger.info("Bot started")
